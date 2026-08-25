@@ -171,6 +171,30 @@ const markRead = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Marked as read' });
 });
 
+// DELETE /api/chat/conversations/:conversationId — gated by loadConversation
+// (which already restricts direct conversations to their two participants)
+// + requireWorkspaceRole('member') as the floor. For workspace/project
+// (group) chats, deleting wipes it for everyone in that space, so that
+// additionally requires Owner/Admin — a direct message has no such
+// concept, so either participant may delete it, matching how deleting a
+// thread works in most DM-based apps. Relies entirely on the existing
+// ON DELETE CASCADE (migration 006) to remove participants and messages;
+// no schema change needed.
+const deleteConversation = asyncHandler(async (req, res) => {
+  const { conversation } = req;
+  if (conversation.type !== 'direct' && !isManager(req.workspaceRole)) {
+    throw ApiError.forbidden('Only workspace owners and admins can delete this chat');
+  }
+
+  await conversationService.remove(conversation.id);
+  messageEvents.emit('conversationDeleted', {
+    conversationId: conversation.id,
+    workspaceId: conversation.workspace_id,
+    type: conversation.type,
+  });
+  res.json({ success: true, message: 'Conversation deleted' });
+});
+
 module.exports = {
   getWorkspaceChat,
   getProjectChat,
@@ -182,4 +206,5 @@ module.exports = {
   updateMessage,
   deleteMessage,
   markRead,
+  deleteConversation,
 };

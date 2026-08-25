@@ -1,21 +1,27 @@
 'use client';
 
-import { useState } from 'react';
-import { MessageSquare, Plus, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { MessageSquare, Plus, Loader2, Trash2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import Button from '@/components/ui/Button';
 import Avatar from '@/components/ui/Avatar';
 import { Card, Alert } from '@/components/ui/Card';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ChatPanel from '@/components/chat/ChatPanel';
 import PresenceDot from '@/components/chat/PresenceDot';
 import NewDirectMessageModal from '@/components/chat/NewDirectMessageModal';
-import { useDirectConversations, useStartDirectConversation } from '@/hooks/useChat';
+import { useDirectConversations, useStartDirectConversation, useDeleteConversation } from '@/hooks/useChat';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
+import { useSocket } from '@/hooks/useSocket';
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function ChatPage() {
   const { data: conversations, isLoading, isError: listError } = useDirectConversations();
   const { data: workspaces } = useWorkspaces();
   const startDirect = useStartDirectConversation();
+  const deleteConversation = useDeleteConversation();
+  const { socket } = useSocket();
+  const qc = useQueryClient();
 
   // Holds the *full* get-or-create response (conversation + messages +
   // readStates), not just an id — reusing the same already-tested
@@ -27,13 +33,10 @@ export default function ChatPage() {
   const [activeThread, setActiveThread] = useState(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
   // Tracks *which* list item is currently being opened (for a per-row
-  // spinner) and surfaces a real error if opening fails — previously
-  // this mutation had no loading or error handling at all, so any
-  // failure (an expired session, a transient network issue, anything)
-  // looked identical to "clicking does nothing": no spinner, no error,
-  // the panel just silently stayed on the empty state.
+  // spinner) and surfaces a real error if opening fails.
   const [openingId, setOpeningId] = useState(null);
   const [openError, setOpenError] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const myRoleInActiveWorkspace = workspaces?.find((w) => w.id === activeThread?.conversation?.workspace_id)?.my_role;
 
@@ -49,6 +52,30 @@ export default function ChatPage() {
       }
     );
   };
+
+  const confirmDelete = () => {
+    const id = deleteTarget.id;
+    deleteConversation.mutate(id, {
+      onSuccess: () => {
+        if (activeThread?.conversation?.id === id) setActiveThread(null);
+        setDeleteTarget(null);
+      },
+    });
+  };
+
+  // If the *other* participant deletes this conversation while I have it
+  // open, stay in sync in real time rather than leaving a dead thread on
+  // screen — reuses the existing Socket.IO connection, no new socket
+  // architecture.
+  useEffect(() => {
+    if (!socket) return undefined;
+    const onDeleted = ({ conversationId }) => {
+      qc.invalidateQueries({ queryKey: ['chat', 'direct'] });
+      setActiveThread((prev) => (prev?.conversation?.id === conversationId ? null : prev));
+    };
+    socket.on('conversation:deleted', onDeleted);
+    return () => socket.off('conversation:deleted', onDeleted);
+  }, [socket, qc]);
 
   return (
     <AppShell title="Chat">
@@ -81,38 +108,50 @@ export default function ChatPage() {
               </div>
             )}
             {conversations?.map((c) => (
-              <button
+              <div
                 key={c.id}
-                onClick={() => openConversation(c)}
-                disabled={openingId === c.id}
-                className={`flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-3 text-left hover:bg-ink/[0.02] disabled:opacity-60 ${
+                className={`group relative flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-3 hover:bg-ink/[0.02] ${
                   activeThread?.conversation?.id === c.id ? 'bg-brand-tint/40' : ''
                 }`}
               >
-                <div className="relative shrink-0">
-                  <Avatar name={c.other_user_name} src={c.other_user_avatar} size={34} />
-                  <PresenceDot
-                    workspaceId={c.workspace_id}
-                    userId={c.other_user_id}
-                    className="absolute -bottom-0.5 -right-0.5"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium text-ink">{c.other_user_name}</p>
-                    {openingId === c.id ? (
-                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted" />
-                    ) : (
-                      c.unread_count > 0 && (
-                        <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-medium text-white">
-                          {c.unread_count}
-                        </span>
-                      )
-                    )}
+                <button
+                  onClick={() => openConversation(c)}
+                  disabled={openingId === c.id}
+                  className="flex flex-1 items-center gap-2.5 text-left disabled:opacity-60"
+                >
+                  <div className="relative shrink-0">
+                    <Avatar name={c.other_user_name} src={c.other_user_avatar} size={34} />
+                    <PresenceDot
+                      workspaceId={c.workspace_id}
+                      userId={c.other_user_id}
+                      className="absolute -bottom-0.5 -right-0.5"
+                    />
                   </div>
-                  <p className="truncate text-xs text-muted">{c.last_message || 'No messages yet'}</p>
-                </div>
-              </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-medium text-ink">{c.other_user_name}</p>
+                      {openingId === c.id ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted" />
+                      ) : (
+                        c.unread_count > 0 && (
+                          <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-medium text-white">
+                            {c.unread_count}
+                          </span>
+                        )
+                      )}
+                    </div>
+                    <p className="truncate text-xs text-muted">{c.last_message || 'No messages yet'}</p>
+                  </div>
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(c); }}
+                  className="shrink-0 rounded-md p-1.5 text-muted opacity-0 hover:bg-danger-tint hover:text-danger group-hover:opacity-100"
+                  aria-label="Delete conversation"
+                  title="Delete conversation"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         </Card>
@@ -126,12 +165,22 @@ export default function ChatPage() {
 
           {activeThread ? (
             <>
-              <div className="mb-3 flex items-center gap-2.5 border-b border-line pb-3">
-                <Avatar name={activeThread.summary.other_user_name} src={activeThread.summary.other_user_avatar} size={30} />
-                <div>
-                  <p className="text-sm font-medium text-ink">{activeThread.summary.other_user_name}</p>
-                  <p className="text-xs text-muted">{activeThread.conversation.workspace_name}</p>
+              <div className="mb-3 flex items-center justify-between border-b border-line pb-3">
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={activeThread.summary.other_user_name} src={activeThread.summary.other_user_avatar} size={30} />
+                  <div>
+                    <p className="text-sm font-medium text-ink">{activeThread.summary.other_user_name}</p>
+                    <p className="text-xs text-muted">{activeThread.conversation.workspace_name}</p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => setDeleteTarget({ id: activeThread.conversation.id, other_user_name: activeThread.summary.other_user_name })}
+                  className="rounded-md p-1.5 text-muted hover:bg-danger-tint hover:text-danger"
+                  aria-label="Delete conversation"
+                  title="Delete conversation"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
               </div>
               <ChatPanel
                 conversationId={activeThread.conversation.id}
@@ -155,6 +204,16 @@ export default function ChatPage() {
         open={newDmOpen}
         onClose={() => setNewDmOpen(false)}
         onStarted={(res) => setActiveThread(res)}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete this conversation?"
+        description={`This permanently deletes your entire message history with ${deleteTarget?.other_user_name}. This can't be undone, and removes it for both of you.`}
+        confirmLabel="Delete conversation"
+        loading={deleteConversation.isPending}
+        onConfirm={confirmDelete}
       />
     </AppShell>
   );

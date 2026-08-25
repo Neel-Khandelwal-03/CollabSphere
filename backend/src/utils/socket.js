@@ -192,6 +192,10 @@ function initSocket(httpServer) {
   messageEvents.on('read', ({ conversation, userId: readerId, messageId }) =>
     io.to(roomForConversation(conversation)).emit('read:update', { conversationId: conversation.id, userId: readerId, messageId })
   );
+  messageEvents.on('conversationDeleted', ({ conversationId, workspaceId, type }) => {
+    const room = type === 'workspace' ? workspaceRoom(workspaceId) : conversationRoom(conversationId);
+    io.to(room).emit('conversation:deleted', { conversationId });
+  });
 
   return io;
 }
