@@ -31,6 +31,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InviteMemberModal from '@/components/workspaces/InviteMemberModal';
 import CreateProjectModal from '@/components/projects/CreateProjectModal';
 import ChatPanel from '@/components/chat/ChatPanel';
+import FileManager from '@/components/files/FileManager';
 import { useAuthStore } from '@/store/authStore';
 import {
   useWorkspace,
@@ -49,6 +50,7 @@ const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'projects', label: 'Projects' },
   { key: 'chat', label: 'Chat' },
+  { key: 'files', label: 'Files' },
   { key: 'members', label: 'Members' },
   { key: 'settings', label: 'Settings' },
 ];
@@ -448,6 +450,11 @@ export default function WorkspaceDetailPage() {
             <div className="flex h-full items-center justify-center text-sm text-muted">Loading chat...</div>
           )}
         </Card>
+      )}
+      {activeTab === 'files' && (
+        <div className="mt-6">
+          <FileManager scope={{ type: 'workspace', workspaceId }} myRole={myRole} />
+        </div>
       )}
       {activeTab === 'members' && (
         <MembersTab

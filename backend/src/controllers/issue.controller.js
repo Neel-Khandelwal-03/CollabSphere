@@ -6,6 +6,8 @@ const historyService = require('../services/issueHistory.service');
 const labelService = require('../services/taskLabel.service');
 const taskService = require('../services/task.service');
 const workspaceMemberService = require('../services/workspaceMember.service');
+const attachmentService = require('../services/issueAttachment.service');
+const { uploadBuffer, deleteResource } = require('../utils/cloudinary');
 const issueEvents = require('../utils/issueEvents');
 
 const MANAGER_ROLES = ['owner', 'admin'];
@@ -79,12 +81,13 @@ const listProjectIssues = asyncHandler(async (req, res) => {
 });
 
 const getIssue = asyncHandler(async (req, res) => {
-  const [comments, history] = await Promise.all([
+  const [comments, history, attachments] = await Promise.all([
     commentService.list(req.params.issueId),
     historyService.list(req.params.issueId),
+    attachmentService.list(req.params.issueId),
   ]);
   const issue = await issueService.findById(req.params.issueId);
-  res.json({ success: true, data: { issue, myRole: req.workspaceRole, comments, history } });
+  res.json({ success: true, data: { issue, myRole: req.workspaceRole, comments, history, attachments } });
 });
 
 function assertCanEdit(req) {
@@ -236,6 +239,51 @@ const detachLabel = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Label removed' });
 });
 
+// ---- Attachments (mirrors task.controller.js's attachment handlers,
+// built with the Cloudinary public_id/resource_type fix already in
+// place from day one, rather than needing the same retrofit tasks did) ----
+
+const uploadAttachment = asyncHandler(async (req, res) => {
+  assertCanEdit(req);
+  if (!req.file) throw ApiError.badRequest('No file provided');
+
+  const folder = `collabsphere/issues/${req.params.issueId}`;
+  const result = await uploadBuffer(req.file.buffer, { folder, filename: req.file.originalname });
+
+  const attachment = await attachmentService.create({
+    issueId: req.params.issueId,
+    uploadedBy: req.user.id,
+    fileName: req.file.originalname,
+    fileUrl: result.secure_url,
+    fileType: req.file.mimetype,
+    fileSize: req.file.size,
+    publicId: result.public_id,
+    resourceType: result.resource_type,
+    folder,
+  });
+
+  await historyService.log(req.params.issueId, req.user.id, 'attachment_uploaded', null, attachment.file_name);
+  res.status(201).json({ success: true, data: { attachment } });
+});
+
+const deleteAttachment = asyncHandler(async (req, res) => {
+  const existing = await attachmentService.findById(req.params.attachmentId);
+  if (!existing || existing.issue_id !== req.params.issueId) throw ApiError.notFound('Attachment not found');
+  if (existing.uploaded_by !== req.user.id && !isManager(req.workspaceRole)) {
+    throw ApiError.forbidden('You can only delete your own attachments');
+  }
+
+  try {
+    await deleteResource(existing.public_id, existing.resource_type || 'image');
+  } catch (err) {
+    console.error(`Cloudinary deletion failed for issue attachment ${existing.id} (public_id ${existing.public_id}):`, err.message);
+    throw ApiError.internal('Failed to delete the stored file. Please try again.');
+  }
+
+  await attachmentService.remove(req.params.attachmentId);
+  res.json({ success: true, message: 'Attachment deleted' });
+});
+
 module.exports = {
   createIssue,
   listMyIssues,
@@ -254,4 +302,6 @@ module.exports = {
   deleteComment,
   attachLabel,
   detachLabel,
+  uploadAttachment,
+  deleteAttachment,
 };

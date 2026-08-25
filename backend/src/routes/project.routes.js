@@ -6,6 +6,7 @@ const validate = require('../middleware/validate');
 const projectController = require('../controllers/project.controller');
 const issueController = require('../controllers/issue.controller');
 const chatController = require('../controllers/chat.controller');
+const fileController = require('../controllers/file.controller');
 const {
   createProjectValidators,
   updateProjectValidators,
@@ -15,6 +16,7 @@ const {
   listProjectsQueryValidators,
 } = require('../middleware/projectValidators');
 const { listIssuesQueryValidators } = require('../middleware/issueValidators');
+const { listFilesQueryValidators } = require('../middleware/fileValidators');
 
 const router = Router();
 
@@ -116,6 +118,18 @@ router.get(
   loadProject,
   requireWorkspaceRole('viewer'),
   chatController.getProjectChat
+);
+
+// Added for File Management (Checkpoint 7). Same union-based listing as
+// the workspace files route, scoped to this project.
+router.get(
+  '/:projectId/files',
+  projectIdValidators,
+  listFilesQueryValidators,
+  validate,
+  loadProject,
+  requireWorkspaceRole('viewer'),
+  fileController.listProjectFiles
 );
 
 module.exports = router;

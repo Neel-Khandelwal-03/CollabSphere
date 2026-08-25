@@ -3,8 +3,10 @@ const authenticate = require('../middleware/authenticate');
 const requireWorkspaceRole = require('../middleware/requireWorkspaceRole');
 const loadConversation = require('../middleware/loadConversation');
 const validate = require('../middleware/validate');
+const upload = require('../middleware/upload');
 const chatController = require('../controllers/chat.controller');
 const {
+  conversationIdValidators,
   startDirectValidators,
   listMessagesValidators,
   createMessageValidators,
@@ -36,6 +38,16 @@ router.post(
   loadConversation,
   requireWorkspaceRole('member'),
   chatController.createMessage
+);
+
+router.post(
+  '/conversations/:conversationId/files',
+  conversationIdValidators,
+  validate,
+  loadConversation,
+  requireWorkspaceRole('member'),
+  upload.single('file'),
+  chatController.createFileMessage
 );
 
 router.patch(

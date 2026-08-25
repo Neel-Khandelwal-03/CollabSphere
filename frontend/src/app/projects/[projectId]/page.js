@@ -29,6 +29,7 @@ import IssueTable from '@/components/issues/IssueTable';
 import CreateIssueModal from '@/components/issues/CreateIssueModal';
 import IssueDetailsDrawer from '@/components/issues/IssueDetailsDrawer';
 import ChatPanel from '@/components/chat/ChatPanel';
+import FileManager from '@/components/files/FileManager';
 import { useProject, useDeleteProject, useArchiveProject, useRestoreProject, useUpdateProject } from '@/hooks/useProjects';
 import { useProjectTasks } from '@/hooks/useTasks';
 import { useProjectIssues } from '@/hooks/useIssues';
@@ -39,6 +40,7 @@ const TABS = [
   { key: 'tasks', label: 'Tasks' },
   { key: 'issues', label: 'Issues' },
   { key: 'chat', label: 'Chat' },
+  { key: 'files', label: 'Files' },
   { key: 'overview', label: 'Overview' },
   { key: 'members', label: 'Members' },
   { key: 'settings', label: 'Settings' },
@@ -380,6 +382,12 @@ export default function ProjectDetailsPage() {
             <div className="flex h-full items-center justify-center text-sm text-muted">Loading chat...</div>
           )}
         </Card>
+      )}
+
+      {activeTab === 'files' && (
+        <div className="mt-6">
+          <FileManager scope={{ type: 'project', projectId, workspaceId: project.workspace_id }} myRole={myRole} />
+        </div>
       )}
 
       {activeTab === 'overview' && <OverviewTab project={project} tasks={tasks || []} />}

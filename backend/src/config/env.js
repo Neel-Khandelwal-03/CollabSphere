@@ -43,5 +43,10 @@ module.exports = {
         process.env.CLOUDINARY_API_KEY &&
         process.env.CLOUDINARY_API_SECRET
     ),
+    // Sensible default for Cloudinary's free tier (25GB total storage,
+    // 25GB monthly bandwidth) — configurable rather than hardcoded, per
+    // Checkpoint 7's explicit requirement, since a self-hosted or paid
+    // Cloudinary plan might reasonably want a different ceiling.
+    maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '15', 10),
   },
 };

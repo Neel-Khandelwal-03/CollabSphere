@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/apiClient';
+import { uploadWithProgress } from '@/lib/uploadWithProgress';
 
 const KEYS = {
   workspaceChat: (workspaceId) => ['chat', 'workspace', workspaceId],
@@ -88,6 +89,31 @@ export function useSendMessage(conversationId) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (content) => api.post(`/chat/conversations/${conversationId}/messages`, { content }),
+    onSuccess: (res) => {
+      qc.setQueryData(KEYS.messages(conversationId), (old = []) => {
+        if (old.some((m) => m.id === res.data.message.id)) return old;
+        return [...old, res.data.message];
+      });
+    },
+  });
+}
+
+/**
+ * Shares a file in a conversation. Uses uploadWithProgress (XHR, not
+ * fetch) so the composer can show real upload progress for larger
+ * files — the same reason useUploadFile does for Workspace/Project
+ * Files. Writes into the exact same message cache key useSendMessage
+ * does, so a shared file appears in the thread the same way a text
+ * message does, no separate rendering path needed at the data layer.
+ */
+export function useSendFileMessage(conversationId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, onProgress }) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return uploadWithProgress(`/chat/conversations/${conversationId}/files`, formData, onProgress);
+    },
     onSuccess: (res) => {
       qc.setQueryData(KEYS.messages(conversationId), (old = []) => {
         if (old.some((m) => m.id === res.data.message.id)) return old;

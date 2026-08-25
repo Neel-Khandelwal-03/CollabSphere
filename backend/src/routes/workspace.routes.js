@@ -7,6 +7,8 @@ const invitationController = require('../controllers/workspaceInvitation.control
 const projectController = require('../controllers/project.controller');
 const labelController = require('../controllers/label.controller');
 const chatController = require('../controllers/chat.controller');
+const fileController = require('../controllers/file.controller');
+const { listFilesQueryValidators } = require('../middleware/fileValidators');
 const {
   createWorkspaceValidators,
   updateWorkspaceValidators,
@@ -147,6 +149,17 @@ router.get(
   validate,
   requireWorkspaceRole('viewer'),
   chatController.getWorkspaceChat
+);
+
+// Added for File Management (Checkpoint 7). Unions files/task_attachments/
+// issue_attachments scoped to this workspace — see file.service.js.
+router.get(
+  '/:workspaceId/files',
+  workspaceIdValidators,
+  listFilesQueryValidators,
+  validate,
+  requireWorkspaceRole('viewer'),
+  fileController.listWorkspaceFiles
 );
 
 module.exports = router;

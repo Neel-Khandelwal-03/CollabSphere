@@ -98,6 +98,11 @@ const detachLabelValidators = [
   param('labelId').isUUID().withMessage('Invalid label id'),
 ];
 
+const attachmentIdValidators = [
+  param('issueId').isUUID().withMessage('Invalid issue id'),
+  param('attachmentId').isUUID().withMessage('Invalid attachment id'),
+];
+
 module.exports = {
   createIssueValidators,
   updateIssueValidators,
@@ -113,4 +118,5 @@ module.exports = {
   commentIdValidators,
   attachLabelValidators,
   detachLabelValidators,
+  attachmentIdValidators,
 };

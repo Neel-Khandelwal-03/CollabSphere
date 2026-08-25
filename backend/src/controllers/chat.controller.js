@@ -3,6 +3,8 @@ const ApiError = require('../utils/ApiError');
 const conversationService = require('../services/conversation.service');
 const messageService = require('../services/message.service');
 const workspaceMemberService = require('../services/workspaceMember.service');
+const fileService = require('../services/file.service');
+const { uploadBuffer } = require('../utils/cloudinary');
 const messageEvents = require('../utils/messageEvents');
 
 const MANAGER_ROLES = ['owner', 'admin'];
@@ -81,6 +83,47 @@ const createMessage = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: { message } });
 });
 
+// POST /api/chat/conversations/:conversationId/files — multipart/form-data.
+// Uploads to Cloudinary, records it in the same general-purpose `files`
+// table Workspace/Project Files use (so a file shared in chat also shows
+// up there — no duplicate storage), then creates a message referencing
+// it via file_id and broadcasts through the *same* messageEvents bridge
+// plain text messages already use. No new Socket.IO event type, no new
+// WebSocket code — 'message:new' already carries whatever the message
+// row contains, which now optionally includes file fields.
+const createFileMessage = asyncHandler(async (req, res) => {
+  if (!req.file) throw ApiError.badRequest('No file provided');
+
+  const folder = `collabsphere/workspaces/${req.conversation.workspace_id}/chat`;
+  const result = await uploadBuffer(req.file.buffer, { folder, filename: req.file.originalname });
+
+  const file = await fileService.create({
+    workspaceId: req.conversation.workspace_id,
+    projectId: req.conversation.project_id || null,
+    uploadedBy: req.user.id,
+    originalName: req.file.originalname,
+    publicId: result.public_id,
+    fileUrl: result.url,
+    secureUrl: result.secure_url,
+    resourceType: result.resource_type,
+    mimeType: req.file.mimetype,
+    fileSize: req.file.size,
+    folder,
+  });
+
+  // Caption is optional; falls back to the filename so the message never
+  // renders with empty body text.
+  const message = await messageService.create(
+    req.params.conversationId,
+    req.user.id,
+    req.body.content || req.file.originalname,
+    file.id
+  );
+
+  messageEvents.emit('created', { conversation: req.conversation, message });
+  res.status(201).json({ success: true, data: { message } });
+});
+
 const updateMessage = asyncHandler(async (req, res) => {
   const existing = await messageService.findById(req.params.messageId);
   if (!existing || existing.conversation_id !== req.params.conversationId) {
@@ -135,6 +178,7 @@ module.exports = {
   startDirectConversation,
   listMessages,
   createMessage,
+  createFileMessage,
   updateMessage,
   deleteMessage,
   markRead,

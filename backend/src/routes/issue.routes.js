@@ -4,6 +4,7 @@ const requireWorkspaceRole = require('../middleware/requireWorkspaceRole');
 const loadIssue = require('../middleware/loadIssue');
 const { resolveProjectFromBody } = require('../middleware/loadTask'); // reused as-is, see loadIssue.js
 const validate = require('../middleware/validate');
+const upload = require('../middleware/upload');
 const issueController = require('../controllers/issue.controller');
 const {
   createIssueValidators,
@@ -20,6 +21,7 @@ const {
   commentIdValidators,
   attachLabelValidators,
   detachLabelValidators,
+  attachmentIdValidators,
 } = require('../middleware/issueValidators');
 
 const router = Router();
@@ -161,6 +163,25 @@ router.delete(
   loadIssue,
   requireWorkspaceRole('member'),
   issueController.detachLabel
+);
+
+router.post(
+  '/:issueId/attachments',
+  issueIdValidators,
+  validate,
+  loadIssue,
+  requireWorkspaceRole('member'),
+  upload.single('file'),
+  issueController.uploadAttachment
+);
+
+router.delete(
+  '/:issueId/attachments/:attachmentId',
+  attachmentIdValidators,
+  validate,
+  loadIssue,
+  requireWorkspaceRole('member'),
+  issueController.deleteAttachment
 );
 
 module.exports = router;
