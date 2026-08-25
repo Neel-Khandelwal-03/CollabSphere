@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment files — never commit real secrets, but keep the
+# .env.example templates tracked so the required variables are
+# documented for anyone setting up the project.
+.env
+.env.*
+!.env.example
+
+# Next.js build output
+.next/
+out/
+
+# Generic build output
+dist/
+build/
+
+# Test coverage
+coverage/
+
+# Logs
+*.log
+
+# OS/editor cruft
+.DS_Store
+.vscode/
+.idea/
+
+# Vercel local config
+.vercel
