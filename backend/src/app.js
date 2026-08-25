@@ -13,8 +13,34 @@ const app = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: env.clientUrl,
-    credentials: true, // allow the refresh-token cookie
+  origin: (origin, callback) => {
+    // Allow requests without an Origin header
+    // (curl, server-to-server requests, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Production frontend
+    if (origin === env.clientUrl) {
+      return callback(null, true);
+    }
+
+    // Vercel preview deployments
+    if (/^https:\/\/collab-sphere-[a-z0-9-]+\.vercel\.app$/.test(origin)) {
+      return callback(null, true);
+    }
+
+    // Local development
+    if (
+      origin === 'http://localhost:3000' ||
+      origin === 'http://127.0.0.1:3000'
+    ) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
   })
 );
 app.use(express.json({ limit: '2mb' }));
