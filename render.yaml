@@ -5,7 +5,14 @@ services:
     rootDir: backend
     plan: free
     buildCommand: npm install
-    startCommand: node src/server.js
+    # Migrations run automatically before the server starts, on every
+    # deploy and restart — not a manual step to remember. Safe because
+    # migrate.js only applies what's missing (each already-applied
+    # migration is skipped) and every migration runs in its own
+    # transaction. This is what would have prevented the "conversation
+    # opens but the DB is missing a column" bug: the schema and the
+    # deployed code can no longer drift apart silently.
+    startCommand: node src/database/migrate.js && node src/server.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV

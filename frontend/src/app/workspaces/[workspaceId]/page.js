@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   UserPlus,
   LogOut,
@@ -43,7 +44,7 @@ import {
   useRemoveMember,
 } from '@/hooks/useWorkspaces';
 import { useWorkspaceProjects } from '@/hooks/useProjects';
-import { useWorkspaceChat } from '@/hooks/useChat';
+import { useWorkspaceChat, useDeleteConversation } from '@/hooks/useChat';
 
 const SETTABLE_ROLES = ['admin', 'member', 'viewer'];
 const TABS = [
@@ -356,6 +357,7 @@ export default function WorkspaceDetailPage() {
   const { workspaceId } = useParams();
   const router = useRouter();
   const currentUser = useAuthStore((s) => s.user);
+  const qc = useQueryClient();
 
   const { data, isLoading, error } = useWorkspace(workspaceId);
   const { data: members, isLoading: membersLoading } = useWorkspaceMembers(workspaceId);
@@ -363,9 +365,11 @@ export default function WorkspaceDetailPage() {
 
   const deleteWorkspace = useDeleteWorkspace();
   const leaveWorkspace = useLeaveWorkspace();
+  const deleteChat = useDeleteConversation();
 
   const [activeTab, setActiveTab] = useState('overview');
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [deleteChatOpen, setDeleteChatOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
 
@@ -436,16 +440,28 @@ export default function WorkspaceDetailPage() {
       {activeTab === 'overview' && <OverviewTab workspace={workspace} recentActivity={recentActivity} />}
       {activeTab === 'projects' && <ProjectsTab workspaceId={workspaceId} canManage={canManage} />}
       {activeTab === 'chat' && (
-        <Card className="mt-6 h-[calc(100vh-320px)] p-4">
+        <Card className="mt-6 flex h-[calc(100vh-320px)] flex-col p-4">
           {chatData ? (
-            <ChatPanel
-              conversationId={chatData.conversation.id}
-              conversationType="workspace"
-              initialMessages={chatData.messages}
-              initialReadStates={chatData.readStates}
-              myRole={myRole}
-              className="h-full"
-            />
+            <>
+              {canManage && (
+                <div className="mb-3 flex justify-end border-b border-line pb-3">
+                  <button
+                    onClick={() => setDeleteChatOpen(true)}
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-danger-tint hover:text-danger"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Clear chat history
+                  </button>
+                </div>
+              )}
+              <ChatPanel
+                conversationId={chatData.conversation.id}
+                conversationType="workspace"
+                initialMessages={chatData.messages}
+                initialReadStates={chatData.readStates}
+                myRole={myRole}
+                className="flex-1"
+              />
+            </>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted">Loading chat...</div>
           )}
@@ -494,6 +510,23 @@ export default function WorkspaceDetailPage() {
         confirmLabel="Leave workspace"
         loading={leaveWorkspace.isPending}
         onConfirm={() => leaveWorkspace.mutate(workspaceId, { onSuccess: () => router.push('/workspaces') })}
+      />
+
+      <ConfirmDialog
+        open={deleteChatOpen}
+        onClose={() => setDeleteChatOpen(false)}
+        title="Clear the workspace chat?"
+        description="This permanently deletes every message in this workspace's chat, for everyone. This can't be undone."
+        confirmLabel="Clear chat history"
+        loading={deleteChat.isPending}
+        onConfirm={() =>
+          deleteChat.mutate(chatData.conversation.id, {
+            onSuccess: () => {
+              qc.invalidateQueries({ queryKey: ['chat', 'workspace', workspaceId] });
+              setDeleteChatOpen(false);
+            },
+          })
+        }
       />
     </AppShell>
   );

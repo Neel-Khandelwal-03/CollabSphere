@@ -77,4 +77,13 @@ router.post(
   chatController.markRead
 );
 
+router.delete(
+  '/conversations/:conversationId',
+  conversationIdValidators,
+  validate,
+  loadConversation,
+  requireWorkspaceRole('member'),
+  chatController.deleteConversation
+);
+
 module.exports = router;

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Trash2, Archive, ArchiveRestore, ChevronLeft, Calendar, CalendarClock,
   Boxes, Plus, UserMinus, CheckSquare, Bug,
@@ -33,7 +34,7 @@ import FileManager from '@/components/files/FileManager';
 import { useProject, useDeleteProject, useArchiveProject, useRestoreProject, useUpdateProject } from '@/hooks/useProjects';
 import { useProjectTasks } from '@/hooks/useTasks';
 import { useProjectIssues } from '@/hooks/useIssues';
-import { useProjectChat } from '@/hooks/useChat';
+import { useProjectChat, useDeleteConversation } from '@/hooks/useChat';
 
 const TABS = [
   { key: 'kanban', label: 'Kanban' },
@@ -244,9 +245,12 @@ export default function ProjectDetailsPage() {
 
   const deleteProject = useDeleteProject(data?.project?.workspace_id);
   const archiveProject = useArchiveProject(projectId, data?.project?.workspace_id);
+  const deleteChat = useDeleteConversation();
+  const qc = useQueryClient();
 
   const [activeTab, setActiveTab] = useState('kanban');
   const [assignOpen, setAssignOpen] = useState(false);
+  const [deleteChatOpen, setDeleteChatOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
@@ -368,16 +372,28 @@ export default function ProjectDetailsPage() {
       )}
 
       {activeTab === 'chat' && (
-        <Card className="mt-6 h-[calc(100vh-320px)] p-4">
+        <Card className="mt-6 flex h-[calc(100vh-320px)] flex-col p-4">
           {chatData ? (
-            <ChatPanel
-              conversationId={chatData.conversation.id}
-              conversationType="project"
-              initialMessages={chatData.messages}
-              initialReadStates={chatData.readStates}
-              myRole={myRole}
-              className="h-full"
-            />
+            <>
+              {isManager && (
+                <div className="mb-3 flex justify-end border-b border-line pb-3">
+                  <button
+                    onClick={() => setDeleteChatOpen(true)}
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-danger-tint hover:text-danger"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Clear chat history
+                  </button>
+                </div>
+              )}
+              <ChatPanel
+                conversationId={chatData.conversation.id}
+                conversationType="project"
+                initialMessages={chatData.messages}
+                initialReadStates={chatData.readStates}
+                myRole={myRole}
+                className="flex-1"
+              />
+            </>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted">Loading chat...</div>
           )}
@@ -469,6 +485,23 @@ export default function ProjectDetailsPage() {
         danger={false}
         loading={archiveProject.isPending}
         onConfirm={() => archiveProject.mutate(undefined, { onSuccess: () => setArchiveOpen(false) })}
+      />
+
+      <ConfirmDialog
+        open={deleteChatOpen}
+        onClose={() => setDeleteChatOpen(false)}
+        title="Clear the project chat?"
+        description="This permanently deletes every message in this project's chat, for everyone. This can't be undone."
+        confirmLabel="Clear chat history"
+        loading={deleteChat.isPending}
+        onConfirm={() =>
+          deleteChat.mutate(chatData.conversation.id, {
+            onSuccess: () => {
+              qc.invalidateQueries({ queryKey: ['chat', 'project', projectId] });
+              setDeleteChatOpen(false);
+            },
+          })
+        }
       />
     </AppShell>
   );

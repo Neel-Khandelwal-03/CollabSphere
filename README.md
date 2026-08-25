@@ -13,8 +13,91 @@ Developer collaboration & project management platform, built incrementally in ch
 - **Checkpoint 6 — Real-Time Chat**: complete, tested. Full Module 9 scope (workspace/project/direct messaging, presence, typing, read receipts).
 - **GitHub workflow established**: `production`/`staging` branches created and pushed, Checkpoint 6 deployed-and-prepared for Vercel/Render/Neon (see Git workflow / Deployment architecture sections).
 - **Checkpoint 7 — File Management & Cloudinary**: complete, tested (this document). Built on `staging`, not yet merged to `production` — see Git workflow.
+- **Post-Checkpoint-7 fix**: existing Direct Messages couldn't be opened (missing error/loading state on the open-conversation mutation), Files sidebar badge corrected — both fixed and tested, committed to `staging`.
 - Everything else (Notifications, Analytics, final deployment) is not started.
 - **Note**: an unrelated Shopping Cart/Products/Inventory request was received between Checkpoint 5 and 6 and correctly identified as a mismatch with this project's actual domain before any work began — flagged to the user, confirmed as a mistake, no code written for it.
+
+## Post-Checkpoint-7 fix: existing Direct Messages couldn't be opened, Files sidebar state
+## Post-Checkpoint-7 addition: delete conversation, and a real production bug diagnosed from browser screenshots
+
+### The production "Something went wrong" bug — diagnosed, not fixed in code
+
+A user reported the deployed app (Vercel + Render + Neon) showing "Something went wrong. Please try again." when opening an existing DM, with screenshots of the actual failure. That exact string is significant: it's not any message this app's frontend code writes — it's `errorHandler.js`'s generic fallback for an *unexpected*, non-operational backend exception, meaning the request reached the backend and got a structured response back (ruling out CORS/network failures) but something inside threw.
+
+Cross-referencing against the two screenshots: the conversation **list** loaded correctly ("Sahil Mohammed / hi" was visible), but **opening** it failed. Those two use different queries — `listDirectForUser` (the list) never touches `messages.file_id` or the `files` table; `messageService.list` (used only when opening a conversation) does. Both only exist as of migration `007_files.sql`. This is a precise, code-level match: **the production Neon database was very likely missing migrations 006 and/or 007** — not a code bug, a deployment-state gap. Nothing in the application code needed to change for this diagnosis; the fix is running the missing migrations against the production database, which requires access to Render/Neon this environment doesn't have.
+
+**A free path around Render's shell being locked behind a paid plan**: `migrate.js` only needs `DATABASE_URL` and network access — it can be run directly from any machine with the Neon connection string, no Render shell required. Also fixed the actual root cause of *why* this could happen at all: Render deploys never ran migrations automatically, so it depended on someone remembering to run them by hand after every schema change. `render.yaml`'s `startCommand` now runs `node src/database/migrate.js && node src/server.js` — migrations apply automatically (and safely — the script skips anything already applied, and each migration is its own transaction) on every deploy and restart, on the free plan, no shell needed. Since Blueprint settings only apply when a service is first created, an already-existing Render service also needs its **Start Command** updated directly in its dashboard settings to pick this up.
+
+### New feature: delete conversation
+
+Requested alongside the bug report. Needed no schema change — `conversation_participants` and `messages` already cascade-delete on `conversation_id` (migration 006), so `conversationService.remove()` is a single `DELETE FROM conversations`.
+
+Authorization differs by conversation type, matching how destructive each action actually is: a **direct message** has no "moderator" concept, so either participant may delete it (gated by `loadConversation`'s existing participant check); a **workspace or project chat** is shared by everyone in that space, so deleting it requires Owner/Admin. Deleting a workspace/project chat doesn't remove the *tab* — visiting it again transparently recreates a fresh, empty conversation, since those were always "get or create" to begin with.
+
+Broadcasts a new `conversation:deleted` Socket.IO event over the exact same `messageEvents` → `utils/socket.js` bridge every other chat event already uses — no new WebSocket architecture. Verified live: if the other DM participant currently has the conversation open when it's deleted, their client is notified in real time and the thread closes on their screen too, not just the deleter's.
+
+### Testing (all executed live)
+
+| Scenario | Result |
+|---|---|
+| Non-participant cannot delete a DM (403) | ✅ |
+| A participant who didn't create the DM can delete it; cascade removes the conversation, all its messages, and both participant rows (verified via direct row counts before/after) | ✅ |
+| A brand-new DM can be started with the same pair immediately after deletion, with no leftover unique-index conflict | ✅ |
+| Member (non-Owner/Admin) blocked (403) from clearing Workspace or Project chat; Owner succeeds (200) on both | ✅ |
+| Re-visiting a cleared Workspace/Project chat tab transparently recreates a fresh, empty conversation | ✅ |
+| Live Socket.IO: the other DM participant, with the conversation open, receives `conversation:deleted` within the same test run | ✅ |
+| Full regression: task, Kanban move, issue, Workspace Files, workspace activity feed | ✅ (5/5) |
+| Frontend production build clean, all 15 routes compile, zero new warnings | ✅ |
+
+One bug caught in this session's own new code before it shipped: the "delete from the open thread's header" button initially passed `activeThread.summary` as the delete target, which has no `.id` field matching the conversation (only `other_user_id`) — would have tried to delete `undefined`. Fixed to construct the correct shape explicitly.
+
+
+
+### Investigation, done before writing any fix
+
+Traced the full chain the bug report specified: conversation list → conversation ID → selected-conversation state → message history fetch → Socket.IO room → composer → send → persistence → real-time delivery → read receipt. Verified every layer live against the exact scenario from the report (a user named "Sahil Mohammed" with a prior "hi" message):
+
+- `GET /chat/direct` (the conversation list) returns the correct shape, including `workspace_id` and `other_user_id` on each row.
+- `POST /chat/direct` (what clicking a conversation calls) — tested with the exact `workspaceId`/`userId` pulled from a real list response — returns `201` with the correct `{ conversation, messages, readStates }` shape, including the existing "hi" message.
+- Re-read `chat/page.js`'s `openConversation` and the `useStartDirectConversation` hook line by line against this response shape. Every field lines up.
+
+**The API layer was already fully correct.** No backend change was needed to fix the actual data flow. What the investigation did surface, directly from the code (not a guess): **`openConversation` had no error handling and no loading state at all.** If the mutation failed for *any* reason — an expired access token at that exact moment (they last 15 minutes), a transient network blip, anything — the promise would simply reject with nothing catching it, and the UI would sit exactly where the bug report describes: no spinner, no error, permanently on "Select a conversation, or start a new one." This matches the reported symptom precisely, is a real, concrete gap (not a rationalization), and is exactly what the checkpoint's own "Loading / Error States" section separately requires regardless of root cause. Fixed by adding a per-conversation loading indicator and a real, visible error message on failure — in both the existing-conversation click path and the "+ New DM" path, which had the identical gap.
+
+One more real (if minor) defensive bug caught while reading this code closely: `activeThread?.conversation.id` would throw if `activeThread` were ever truthy while `activeThread.conversation` was somehow undefined — the leading `?.` only guards the first property access, not the chained `.id` after it. Fixed to `activeThread?.conversation?.id`.
+
+`ChatPanel` itself was also missing a send-failure error message (it already had one for file-upload failures, added in Checkpoint 7, but not for plain text messages) — added, benefiting Workspace Chat, Project Chat, and DMs alike since they all share this one component.
+
+### A genuine, fresh attempt at browser verification
+
+Per the request's explicit instruction, a real attempt was made to get browser automation working in this environment before falling back to API/socket-level testing — not simply asserting the earlier known limitation still held. `npx playwright install chromium --with-deps` was run fresh; it fails because the sandbox's network access doesn't extend to the Ubuntu package repository Playwright's Chromium dependencies need (a 403 on `deb.nodesource.com`, a domain outside this environment's allowlist), and the browser binary itself did not download either. This is a hard, confirmed environment constraint, not an assumption. Manual verification steps are provided below.
+
+### Issue 2 — Files sidebar
+
+Audited the actual repository rather than trusting the request's framing (which was written as if File Management hadn't shipped yet): **Checkpoint 7 (File Management & Cloudinary) is fully implemented and already committed to `staging`** — this is Case A from the request, not Case B. The sidebar's "Files" item still had `comingSoon: true`, inconsistent with the real state of the app. Fixed: `comingSoon` removed, item is now clickable.
+
+One real architectural wrinkle worth being explicit about: Files has no dedicated top-level page — Checkpoint 7 deliberately built it as "Files" tabs on Workspace Details and Project Details (matching that checkpoint's own design, since a file library is inherently workspace/project-scoped, unlike Chat's flat DM list). There is no single `/files` route to link to. Rather than invent one — which the request for this fix explicitly said not to do ("Do NOT implement File Management as part of this task") — the sidebar item links to `/workspaces`, the natural entry point to reach any workspace's Files tab. This is genuinely functional, not a dead link, but it does mean "Workspaces" and "Files" both highlight as active on `/workspaces` routes, a minor cosmetic overlap being disclosed rather than left unmentioned. A dedicated cross-workspace Files page, if wanted, would be new File Management UI and is out of scope here.
+
+The existing `NAV_ITEMS` array (a single config array, each item declaring `href`/`comingSoon`, rendered generically in one place) already *is* the "config-driven, not scattered hardcoded UI" pattern the request asked for in Case B — no further refactor was needed to satisfy that intent.
+
+### Sidebar collapse/overflow re-verified, not just assumed intact
+
+The collapsed-sidebar horizontal-overflow bug fixed in an earlier session (a portal-rendered `Tooltip` escaping the nav container's scroll context) was re-inspected: the fix is still in place, `Tooltip.js` still portals to `document.body`, and no new `overflow-y-auto` container without a matching `overflow-x-hidden` was introduced by this fix. Not re-verified in an actual browser, for the same confirmed reason above — code-level re-inspection only.
+
+### Manual browser verification steps (since automation is confirmed unavailable here)
+
+1. Log in, go to **Chat**. Confirm the conversation list loads with existing DMs, each showing the other person's name and last message.
+2. Click an existing conversation. Confirm: a brief spinner appears next to that row while it loads, the right panel populates with the header (avatar + name), full message history in order, the composer is visible and focusable, and no error appears.
+3. Type and send a message. Confirm it appears instantly, then refresh the page and confirm it's still there.
+4. Open the same conversation in a second browser (or an incognito window) logged in as the other participant. Send a message from each side and confirm the other side receives it within roughly a second, with correct sender name and no duplicates.
+5. While the second user is *not* looking at the conversation, send a message from the first; confirm an unread badge appears on the second user's conversation list, and clears once they open it.
+6. Type in the composer on one side and confirm a "typing..." indicator appears on the other side within a couple seconds, then disappears shortly after typing stops.
+7. Click the online status dot next to a conversation; confirm it reflects whether that person's Chat page is currently open elsewhere.
+8. Click **+ New message**, pick a workspace, pick a member who already has a DM with you — confirm it opens the *same* existing conversation (check the message history is the old one, not empty) rather than creating a second one.
+9. Pick a member with no existing DM — confirm a new empty conversation opens and a message can be sent.
+10. Disconnect network briefly (e.g., devtools offline mode), attempt to send a message, confirm a visible error appears rather than the message silently vanishing; reconnect and confirm the composer works again.
+11. In the sidebar, confirm **Files** no longer shows "SOON," is clickable, and takes you to Workspaces.
+12. Collapse the sidebar; confirm no horizontal scrollbar appears anywhere, tooltips still show on hover over icons, and expanding it back works cleanly.
+
 
 ## Checkpoint 7 — File Management & Cloudinary
 

@@ -147,6 +147,17 @@ async function listDirectForUser(userId) {
   return rows;
 }
 
+/**
+ * Deletes a conversation entirely. No schema change was needed for
+ * this — conversation_participants and messages both already have
+ * ON DELETE CASCADE on conversation_id (migration 006), so a single
+ * DELETE here cleanly removes every participant row and every message
+ * that belonged to it.
+ */
+async function remove(conversationId) {
+  await db.query('DELETE FROM conversations WHERE id = $1', [conversationId]);
+}
+
 module.exports = {
   findById,
   getOrCreateWorkspaceConversation,
@@ -154,4 +165,5 @@ module.exports = {
   getOrCreateDirectConversation,
   isParticipant,
   listDirectForUser,
+  remove,
 };

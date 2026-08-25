@@ -152,4 +152,21 @@ export function useMarkRead(conversationId) {
   });
 }
 
+/**
+ * Deletes a conversation entirely (relies on the backend's cascade —
+ * removes every message and participant row too). Direct conversations
+ * are removed from the DM list; workspace/project conversations get
+ * silently recreated empty next time that tab is opened, since those
+ * are always "get or create."
+ */
+export function useDeleteConversation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (conversationId) => api.delete(`/chat/conversations/${conversationId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.directList() });
+    },
+  });
+}
+
 export { KEYS as CHAT_KEYS };
