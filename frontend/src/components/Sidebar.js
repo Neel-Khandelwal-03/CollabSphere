@@ -31,7 +31,12 @@ const NAV_ITEMS = [
   { href: '/tasks', label: 'Tasks', icon: CheckSquare },
   { href: '/issues', label: 'Issues', icon: Bug },
   { href: '/chat', label: 'Chat', icon: MessageSquare },
-  { href: '#', label: 'Files', icon: FolderOpen, comingSoon: true },
+  // Files (Checkpoint 7) has no dedicated top-level page — it lives as
+  // "Files" tabs on Workspace Details and Project Details, matching the
+  // workspace/project-scoped file libraries that checkpoint built. This
+  // links to the natural entry point rather than inventing a new page,
+  // which the instruction for this fix explicitly said not to do.
+  { href: '/workspaces', label: 'Files', icon: FolderOpen },
   { href: '#', label: 'Analytics', icon: BarChart3, comingSoon: true },
   { href: '#', label: 'Notifications', icon: Bell, comingSoon: true },
 ];
