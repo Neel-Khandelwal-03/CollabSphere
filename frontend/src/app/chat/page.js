@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { MessageSquare, Plus } from 'lucide-react';
+import { MessageSquare, Plus, Loader2 } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import Button from '@/components/ui/Button';
 import Avatar from '@/components/ui/Avatar';
-import { Card } from '@/components/ui/Card';
+import { Card, Alert } from '@/components/ui/Card';
 import ChatPanel from '@/components/chat/ChatPanel';
 import PresenceDot from '@/components/chat/PresenceDot';
 import NewDirectMessageModal from '@/components/chat/NewDirectMessageModal';
@@ -13,7 +13,7 @@ import { useDirectConversations, useStartDirectConversation } from '@/hooks/useC
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 
 export default function ChatPage() {
-  const { data: conversations, isLoading } = useDirectConversations();
+  const { data: conversations, isLoading, isError: listError } = useDirectConversations();
   const { data: workspaces } = useWorkspaces();
   const startDirect = useStartDirectConversation();
 
@@ -26,13 +26,27 @@ export default function ChatPage() {
   // rather than the list view's lightweight summary rows.
   const [activeThread, setActiveThread] = useState(null);
   const [newDmOpen, setNewDmOpen] = useState(false);
+  // Tracks *which* list item is currently being opened (for a per-row
+  // spinner) and surfaces a real error if opening fails — previously
+  // this mutation had no loading or error handling at all, so any
+  // failure (an expired session, a transient network issue, anything)
+  // looked identical to "clicking does nothing": no spinner, no error,
+  // the panel just silently stayed on the empty state.
+  const [openingId, setOpeningId] = useState(null);
+  const [openError, setOpenError] = useState(null);
 
-  const myRoleInActiveWorkspace = workspaces?.find((w) => w.id === activeThread?.conversation.workspace_id)?.my_role;
+  const myRoleInActiveWorkspace = workspaces?.find((w) => w.id === activeThread?.conversation?.workspace_id)?.my_role;
 
   const openConversation = (c) => {
+    setOpenError(null);
+    setOpeningId(c.id);
     startDirect.mutate(
       { workspaceId: c.workspace_id, userId: c.other_user_id },
-      { onSuccess: (res) => setActiveThread({ ...res.data, summary: c }) }
+      {
+        onSuccess: (res) => setActiveThread({ ...res.data, summary: c }),
+        onError: (err) => setOpenError(err.message || 'Could not open this conversation. Please try again.'),
+        onSettled: () => setOpeningId(null),
+      }
     );
   };
 
@@ -53,7 +67,12 @@ export default function ChatPage() {
 
           <div className="flex-1 overflow-y-auto">
             {isLoading && <p className="p-4 text-center text-sm text-muted">Loading...</p>}
-            {!isLoading && conversations?.length === 0 && (
+            {listError && (
+              <div className="p-4">
+                <Alert variant="danger">Couldn&apos;t load your conversations. Try refreshing the page.</Alert>
+              </div>
+            )}
+            {!isLoading && !listError && conversations?.length === 0 && (
               <div className="p-4 text-center">
                 <p className="text-sm text-muted">No conversations yet.</p>
                 <Button onClick={() => setNewDmOpen(true)} className="mt-3">
@@ -65,8 +84,9 @@ export default function ChatPage() {
               <button
                 key={c.id}
                 onClick={() => openConversation(c)}
-                className={`flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-3 text-left hover:bg-ink/[0.02] ${
-                  activeThread?.conversation.id === c.id ? 'bg-brand-tint/40' : ''
+                disabled={openingId === c.id}
+                className={`flex w-full items-center gap-2.5 border-b border-line/60 px-4 py-3 text-left hover:bg-ink/[0.02] disabled:opacity-60 ${
+                  activeThread?.conversation?.id === c.id ? 'bg-brand-tint/40' : ''
                 }`}
               >
                 <div className="relative shrink-0">
@@ -80,10 +100,14 @@ export default function ChatPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <p className="truncate text-sm font-medium text-ink">{c.other_user_name}</p>
-                    {c.unread_count > 0 && (
-                      <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-medium text-white">
-                        {c.unread_count}
-                      </span>
+                    {openingId === c.id ? (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted" />
+                    ) : (
+                      c.unread_count > 0 && (
+                        <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-medium text-white">
+                          {c.unread_count}
+                        </span>
+                      )
                     )}
                   </div>
                   <p className="truncate text-xs text-muted">{c.last_message || 'No messages yet'}</p>
@@ -94,6 +118,12 @@ export default function ChatPage() {
         </Card>
 
         <Card className="flex flex-1 flex-col p-4">
+          {openError && (
+            <div className="mb-3">
+              <Alert variant="danger">{openError}</Alert>
+            </div>
+          )}
+
           {activeThread ? (
             <>
               <div className="mb-3 flex items-center gap-2.5 border-b border-line pb-3">

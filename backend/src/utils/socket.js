@@ -52,31 +52,7 @@ function roomForConversation(conversation) {
 
 function initSocket(httpServer) {
   const io = new Server(httpServer, {
-    cors: {
-      origin: (origin, callback) => {
-        if (!origin) {
-          return callback(null, true);
-        }
-
-        if (origin === process.env.CLIENT_URL) {
-          return callback(null, true);
-        }
-
-        if (/^https:\/\/collab-sphere-[a-z0-9-]+\.vercel\.app$/.test(origin)) {
-          return callback(null, true);
-        }
-
-        if (
-          origin === 'http://localhost:3000' ||
-          origin === 'http://127.0.0.1:3000'
-        ) {
-          return callback(null, true);
-        }
-
-        return callback(new Error('Not allowed by Socket.IO CORS'));
-      },
-      credentials: true,
-    },
+    cors: { origin: process.env.CLIENT_URL || 'http://localhost:3000', credentials: true },
   });
 
   // Auth handshake: reuses the exact same access-token verification as

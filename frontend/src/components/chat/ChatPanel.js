@@ -144,6 +144,9 @@ export default function ChatPanel({
       <TypingIndicator names={typingUsers} />
 
       {fileError && <Alert variant="danger" className="mb-2">{fileError}</Alert>}
+      {sendMessage.isError && (
+        <Alert variant="danger" className="mb-2">{sendMessage.error.message || 'Message failed to send. Please try again.'}</Alert>
+      )}
       {uploadProgress !== null && (
         <div className="mb-2">
           <div className="h-1.5 overflow-hidden rounded-full bg-ink/10">
