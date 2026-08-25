@@ -7,7 +7,7 @@ const attachmentService = require('../services/taskAttachment.service');
 const activityService = require('../services/taskActivity.service');
 const workspaceMemberService = require('../services/workspaceMember.service');
 const taskEvents = require('../utils/taskEvents');
-const { uploadBuffer } = require('../utils/cloudinary');
+const { uploadBuffer, deleteResource } = require('../utils/cloudinary');
 
 const MANAGER_ROLES = ['owner', 'admin'];
 
@@ -233,10 +233,8 @@ const deleteComment = asyncHandler(async (req, res) => {
 const uploadAttachment = asyncHandler(async (req, res) => {
   if (!req.file) throw ApiError.badRequest('No file provided');
 
-  const result = await uploadBuffer(req.file.buffer, {
-    folder: `collabsphere/tasks/${req.params.taskId}`,
-    filename: req.file.originalname,
-  });
+  const folder = `collabsphere/tasks/${req.params.taskId}`;
+  const result = await uploadBuffer(req.file.buffer, { folder, filename: req.file.originalname });
 
   const attachment = await attachmentService.create({
     taskId: req.params.taskId,
@@ -245,6 +243,9 @@ const uploadAttachment = asyncHandler(async (req, res) => {
     fileUrl: result.secure_url,
     fileType: req.file.mimetype,
     fileSize: req.file.size,
+    publicId: result.public_id,
+    resourceType: result.resource_type,
+    folder,
   });
 
   await activityService.log(req.params.taskId, req.user.id, 'attachment_uploaded', { fileName: attachment.file_name });
@@ -257,6 +258,21 @@ const deleteAttachment = asyncHandler(async (req, res) => {
   if (!existing || existing.task_id !== req.params.taskId) throw ApiError.notFound('Attachment not found');
   if (existing.uploaded_by !== req.user.id && !isManager(req.workspaceRole)) {
     throw ApiError.forbidden('You can only delete your own attachments');
+  }
+
+  // Cloudinary first, then Postgres — same reasoning as file.controller.js's
+  // deleteFile. Attachments uploaded before migration 007 have no
+  // public_id (added retroactively); deleteResource's own guard treats a
+  // missing public_id as a no-op rather than an error, so old rows still
+  // delete cleanly from the database, just without anything to clean up
+  // on the Cloudinary side (nothing to clean up — nothing was ever
+  // recorded for them to begin with, a documented limitation, not a
+  // silently swallowed failure).
+  try {
+    await deleteResource(existing.public_id, existing.resource_type || 'image');
+  } catch (err) {
+    console.error(`Cloudinary deletion failed for task attachment ${existing.id} (public_id ${existing.public_id}):`, err.message);
+    throw ApiError.internal('Failed to delete the stored file. Please try again.');
   }
 
   await attachmentService.remove(req.params.attachmentId);

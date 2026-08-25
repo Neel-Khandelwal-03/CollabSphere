@@ -13,6 +13,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import LabelPill from '@/components/ui/LabelPill';
 import EditIssueModal from './EditIssueModal';
 import IssueCommentPanel from './IssueCommentPanel';
+import IssueAttachmentPanel from './IssueAttachmentPanel';
 import IssueHistoryTimeline from './IssueHistoryTimeline';
 import {
   useIssue, useChangeIssueStatus, useChangeIssuePriority, useChangeIssueSeverity,
@@ -247,6 +248,18 @@ export default function IssueDetailsDrawer({ issueId, workspaceId, onClose, onDe
                       {availableLabels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                     </select>
                   )}
+                </div>
+
+                <div className="mt-6 border-t border-line pt-5">
+                  <p className="mb-3 font-mono text-xs uppercase tracking-wider text-muted">
+                    Attachments ({data.attachments?.length || 0})
+                  </p>
+                  <IssueAttachmentPanel
+                    issueId={issueId}
+                    attachments={data.attachments || []}
+                    canUpload={canEdit}
+                    canModerate={isManager}
+                  />
                 </div>
 
                 <div className="mt-6 border-t border-line pt-5">

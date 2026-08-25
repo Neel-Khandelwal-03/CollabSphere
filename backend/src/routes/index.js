@@ -5,6 +5,7 @@ const projectRoutes = require('./project.routes');
 const taskRoutes = require('./task.routes');
 const issueRoutes = require('./issue.routes');
 const chatRoutes = require('./chat.routes');
+const fileRoutes = require('./file.routes');
 
 const router = Router();
 
@@ -15,9 +16,9 @@ router.use('/projects', projectRoutes);
 router.use('/tasks', taskRoutes);
 router.use('/issues', issueRoutes);
 router.use('/chat', chatRoutes);
+router.use('/files', fileRoutes);
 
 // Future modules mount here:
-// router.use('/files', fileRoutes);
 // router.use('/notifications', notificationRoutes);
 
 module.exports = router;

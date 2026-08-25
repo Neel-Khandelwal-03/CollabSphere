@@ -2,7 +2,8 @@ const db = require('../config/db');
 
 async function list(taskId) {
   const { rows } = await db.query(
-    `SELECT a.id, a.task_id, a.uploaded_by, a.file_name, a.file_url, a.file_type, a.file_size, a.created_at,
+    `SELECT a.id, a.task_id, a.uploaded_by, a.file_name, a.file_url, a.file_type, a.file_size,
+            a.public_id, a.resource_type, a.folder, a.created_at,
             u.name AS uploaded_by_name
      FROM task_attachments a
      LEFT JOIN users u ON u.id = a.uploaded_by
@@ -18,12 +19,12 @@ async function findById(attachmentId) {
   return rows[0] || null;
 }
 
-async function create({ taskId, uploadedBy, fileName, fileUrl, fileType, fileSize }) {
+async function create({ taskId, uploadedBy, fileName, fileUrl, fileType, fileSize, publicId, resourceType, folder }) {
   const { rows } = await db.query(
-    `INSERT INTO task_attachments (task_id, uploaded_by, file_name, file_url, file_type, file_size)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, task_id, uploaded_by, file_name, file_url, file_type, file_size, created_at`,
-    [taskId, uploadedBy, fileName, fileUrl, fileType, fileSize]
+    `INSERT INTO task_attachments (task_id, uploaded_by, file_name, file_url, file_type, file_size, public_id, resource_type, folder)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id, task_id, uploaded_by, file_name, file_url, file_type, file_size, public_id, resource_type, folder, created_at`,
+    [taskId, uploadedBy, fileName, fileUrl, fileType, fileSize, publicId, resourceType, folder]
   );
   return rows[0];
 }

@@ -1,10 +1,12 @@
 const db = require('../config/db');
 
 const SELECT_FIELDS = `
-  m.id, m.conversation_id, m.sender_id, m.content, m.edited_at, m.created_at,
-  u.name AS sender_name, u.avatar_url AS sender_avatar
+  m.id, m.conversation_id, m.sender_id, m.content, m.edited_at, m.created_at, m.file_id,
+  u.name AS sender_name, u.avatar_url AS sender_avatar,
+  f.original_name AS file_name, f.secure_url AS file_url, f.mime_type AS file_type,
+  f.file_size AS file_size, f.resource_type AS file_resource_type
 `;
-const JOINS = `LEFT JOIN users u ON u.id = m.sender_id`;
+const JOINS = `LEFT JOIN users u ON u.id = m.sender_id LEFT JOIN files f ON f.id = m.file_id`;
 
 /**
  * Newest-first page of a conversation's messages, optionally paging
@@ -39,10 +41,10 @@ async function findById(messageId) {
   return rows[0] || null;
 }
 
-async function create(conversationId, senderId, content) {
+async function create(conversationId, senderId, content, fileId = null) {
   const { rows } = await db.query(
-    'INSERT INTO messages (conversation_id, sender_id, content) VALUES ($1, $2, $3) RETURNING id',
-    [conversationId, senderId, content]
+    'INSERT INTO messages (conversation_id, sender_id, content, file_id) VALUES ($1, $2, $3, $4) RETURNING id',
+    [conversationId, senderId, content, fileId]
   );
   return findById(rows[0].id);
 }

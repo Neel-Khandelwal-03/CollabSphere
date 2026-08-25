@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/apiClient';
+import { useAuthStore } from '@/store/authStore';
 
 const KEYS = {
   mine: (filters) => ['issues', 'mine', filters],
@@ -169,6 +170,41 @@ export function useDetachIssueLabel(issueId) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (labelId) => api.delete(`/issues/${issueId}/labels/${labelId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.detail(issueId) }),
+  });
+}
+
+// ---- Attachments (mirrors useUploadAttachment/useDeleteAttachment in
+// useTasks.js exactly, same plain-fetch-with-FormData pattern) ----
+
+export function useUploadIssueAttachment(issueId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const accessToken = useAuthStore.getState().accessToken;
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/issues/${issueId}/attachments`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+          body: formData,
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Upload failed');
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.detail(issueId) }),
+  });
+}
+
+export function useDeleteIssueAttachment(issueId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (attachmentId) => api.delete(`/issues/${issueId}/attachments/${attachmentId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.detail(issueId) }),
   });
 }

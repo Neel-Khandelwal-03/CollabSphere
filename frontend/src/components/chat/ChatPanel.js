@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Paperclip } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Select';
+import { Alert } from '@/components/ui/Card';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
-import { useMessages, useSendMessage, useEditMessage, useDeleteMessage, useMarkRead, useOlderMessages } from '@/hooks/useChat';
+import FilePreview from '@/components/files/FilePreview';
+import { useMessages, useSendMessage, useSendFileMessage, useEditMessage, useDeleteMessage, useMarkRead, useOlderMessages } from '@/hooks/useChat';
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useAuthStore } from '@/store/authStore';
 
@@ -32,15 +34,20 @@ export default function ChatPanel({
   const { typingUsers, readStates, emitTyping } = useChatSocket(conversationId, initialReadStates);
 
   const sendMessage = useSendMessage(conversationId);
+  const sendFileMessage = useSendFileMessage(conversationId);
   const editMessage = useEditMessage(conversationId);
   const deleteMessage = useDeleteMessage(conversationId);
   const markRead = useMarkRead(conversationId);
   const olderMessages = useOlderMessages(conversationId);
 
   const [draft, setDraft] = useState('');
+  const [fileError, setFileError] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(null);
+  const [previewFile, setPreviewFile] = useState(null);
   const scrollRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const lastMarkedRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const canModerate = conversationType !== 'direct' && MANAGER_ROLES.includes(myRole);
   const canWrite = myRole && myRole !== 'viewer';
@@ -86,6 +93,21 @@ export default function ChatPanel({
     return readStates.filter((r) => r.user_id !== currentUser?.id && r.last_read_message_id);
   };
 
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setFileError(null);
+    setUploadProgress(0);
+    sendFileMessage.mutate(
+      { file, onProgress: setUploadProgress },
+      {
+        onSettled: () => setUploadProgress(null),
+        onError: (err) => setFileError(err.message),
+      }
+    );
+  };
+
   return (
     <div className={`flex h-full flex-col ${className}`}>
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-1 py-2">
@@ -113,6 +135,7 @@ export default function ChatPanel({
               onEdit={(id, content) => editMessage.mutate({ messageId: id, content })}
               onDelete={(id) => deleteMessage.mutate(id)}
               readers={readersFor(m.id)}
+              onPreviewFile={setPreviewFile}
             />
           ))
         )}
@@ -120,8 +143,26 @@ export default function ChatPanel({
 
       <TypingIndicator names={typingUsers} />
 
+      {fileError && <Alert variant="danger" className="mb-2">{fileError}</Alert>}
+      {uploadProgress !== null && (
+        <div className="mb-2">
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink/10">
+            <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${uploadProgress}%` }} />
+          </div>
+        </div>
+      )}
+
       {canWrite ? (
         <div className="flex items-end gap-2 border-t border-line pt-3">
+          <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect} />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadProgress !== null}
+            className="rounded-lg p-2.5 text-muted hover:bg-ink/5 hover:text-ink disabled:opacity-50"
+            aria-label="Attach a file"
+          >
+            <Paperclip className="h-4 w-4" />
+          </button>
           <Textarea
             rows={1}
             placeholder="Write a message..."
@@ -139,6 +180,8 @@ export default function ChatPanel({
           You have read-only access to this conversation.
         </p>
       )}
+
+      <FilePreview open={!!previewFile} onClose={() => setPreviewFile(null)} file={previewFile} />
     </div>
   );
 }

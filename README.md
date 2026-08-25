@@ -10,8 +10,77 @@ Developer collaboration & project management platform, built incrementally in ch
 - **Checkpoint 4 — Task Management & Kanban**: complete, tested, untouched in this round except two minimal, justified additions for Issue integration.
 - **Checkpoint 5 — Issue Tracking**: complete, tested — rebuilt twice after mid-checkpoint environment resets, re-verified in full each time.
 - **Post-Checkpoint-5 fixes**: Dashboard task count, sidebar overflow, missing issue-creation UI — all fixed and tested.
-- **Checkpoint 6 — Real-Time Chat**: complete, tested (this document). Full Module 9 scope (workspace/project/direct messaging, presence, typing, read receipts).
-- Everything else (Files, Notifications, Analytics, Deployment) is not started.
+- **Checkpoint 6 — Real-Time Chat**: complete, tested. Full Module 9 scope (workspace/project/direct messaging, presence, typing, read receipts).
+- **GitHub workflow established**: `production`/`staging` branches created and pushed, Checkpoint 6 deployed-and-prepared for Vercel/Render/Neon (see Git workflow / Deployment architecture sections).
+- **Checkpoint 7 — File Management & Cloudinary**: complete, tested (this document). Built on `staging`, not yet merged to `production` — see Git workflow.
+- Everything else (Notifications, Analytics, final deployment) is not started.
+- **Note**: an unrelated Shopping Cart/Products/Inventory request was received between Checkpoint 5 and 6 and correctly identified as a mismatch with this project's actual domain before any work began — flagged to the user, confirmed as a mistake, no code written for it.
+
+## Checkpoint 7 — File Management & Cloudinary
+
+Built on `staging`, per the required Git workflow — not pushed or merged to `production` yet; see the Git workflow section for what's still pending (staging push, PR, manual merge approval).
+
+### Audit findings (done before writing any code)
+
+A real Cloudinary utility already existed from Checkpoint 4 (`uploadBuffer`, an allowlist covering exactly the file types this checkpoint asks for, a working multer middleware) — reused as-is. But the audit found two things that materially changed the plan:
+
+1. **No `public_id` was ever stored anywhere.** `task_attachments`' delete handler only ever removed the PostgreSQL row — it never called Cloudinary's delete API, because it had no `public_id` to call it with. Every task attachment deleted since Checkpoint 4 is an orphaned Cloudinary resource. This wasn't a design gap noticed in passing — it's a real, previously-shipped bug, fixed as part of this checkpoint (see below).
+2. **Issues and Chat had zero attachment infrastructure** — a blank slate for both, not something to extend.
+
+### Architecture
+
+- **`task_attachments`** (Checkpoint 4) — extended, not replaced: added `public_id`/`resource_type`/`folder` columns (nullable; pre-migration rows get `NULL`, a documented limitation — see Known Limitations). `create()`/`remove()` in both `taskAttachment.service.js` and `task.controller.js` updated to actually populate and use them.
+- **`issue_attachments`** — new table, built to mirror `task_attachments`' corrected shape from day one rather than needing the same retrofit. Matches this codebase's established Task/Issue architectural mirroring (comments, labels, activity trails all already follow this pattern).
+- **`files`** — new general-purpose table backing Workspace Files, Project Files, and chat file-sharing, none of which have a single natural "owning entity" the way a task or issue attachment does.
+- **`messages.file_id`** — one additive, nullable column (Checkpoint 6's table). A shared file is still just a message with a file attached, not a parallel "file message" concept.
+
+**Workspace/Project Files views are a UNION query across `files` + `task_attachments` + `issue_attachments`** (see `file.service.js`), not a duplicated copy of anything — a file attached to a task and visible in "Project Files" is the exact same row, satisfying the spec's explicit "do not duplicate storage records for the same physical file" requirement. Verified directly: created one file via each of the three paths, confirmed all three appear in both the Workspace and Project views with zero duplication, and confirmed search/category-filter/sort all work correctly across the union.
+
+### Two real bugs found and fixed (both predate this checkpoint)
+
+1. **The Cloudinary-orphan bug above** — `task.controller.js`'s `deleteAttachment` now actually calls `deleteResource()` before removing the database row, with explicit handling for both failure directions (Cloudinary fails → row stays, nothing silently vanishes; Cloudinary succeeds but the DB delete then fails → logged as an orphaned-metadata case needing manual cleanup, not silently swallowed).
+2. **Oversized uploads returned an opaque 500, not a validation error.** Multer's own errors (`LIMIT_FILE_SIZE` and others) were never translated by `errorHandler.js` — they fell straight through to the generic "Something went wrong" 500 handler. Fixed centrally in `errorHandler.js` rather than per-route, so every current and future upload route benefits. Verified live: a 16MB upload against the 15MB limit now correctly returns `400 "File is too large. Maximum size is 15MB."` — confirmed against **both** the new `/api/files` route and the pre-existing task attachment route, proving the fix actually closes the historical gap rather than just avoiding it going forward.
+
+### Security
+
+Filenames are never trusted as storage identifiers — `sanitizeFilenameForStorage` strips to a conservative charset and the actual Cloudinary `public_id` is a random-prefixed, sanitized name, not the raw client-supplied filename. Verified directly against path-traversal (`../../etc/passwd`), XSS-shaped (`<script>...`), and unicode input — all safely neutralized before ever reaching Cloudinary. Dangerous extensions (`.exe`, `.bat`, `.sh`, `.dll`, etc.) are explicitly denylisted by extension in addition to the MIME allowlist, so a mislabeled dangerous file can't slip through on a generic content-type. Every file read (`GET`, `/download`, list) is gated by workspace membership via the same `requireWorkspaceRole` middleware every other module uses — a file can never be reached by guessing an ID, only by first passing the same RBAC check as everything else in this app.
+
+### Frontend
+
+`FileManager` (search/filter/sort, grid/list toggle, drag-and-drop upload with live progress via a new `uploadWithProgress` XHR utility — `fetch` has no upload-progress API at all) is one shared component parameterized by workspace-or-project scope, rendered from a new "Files" tab on both Workspace Details and Project Details — the same "one component, multiple entry points" pattern already established by `IssueTable`/`CreateIssueModal`. `FilePreview` (inline image, embedded PDF, download prompt for everything else) is shared across the file manager, issue attachments, and chat file messages — one component, not three.
+
+Issue attachments got a new `IssueAttachmentPanel`, deliberately mirroring `AttachmentPanel`'s established look rather than being built from scratch, wired into the Issue Details drawer with the same assigned-only-for-Members gating every other issue mutation already uses.
+
+Chat file-sharing reuses the exact same message cache and `messageEvents` → Socket.IO bridge plain text messages already use — no new WebSocket event type. `MessageBubble` renders a shared file inline (image preview or a file card with icon/name/size/download), and only shows the file's caption as separate text when a real caption was typed, not the filename the backend defaults to when none was given.
+
+### Two real bugs caught in this session's own new code, before they shipped
+
+- `useFiles.js` originally exposed a `downloadFileUrl()` helper meant to be used in a plain `<a href>` — but a browser link can't attach an `Authorization` header, so the backend's authenticated `/download` redirect would have silently failed auth if used that way. Removed; the frontend uses `secure_url` directly instead, the same already-working pattern `AttachmentPanel.js` established in Checkpoint 4 (a URL is only ever visible after an authorized API call in the first place, so a further backend hop isn't needed for the browser case). The backend endpoint itself is unaffected and still correct for non-browser API consumers that can set the header themselves.
+- `FileList`'s per-row delete button was checking `canDelete` as a static boolean, but `FileManager` passes it a per-file permission *function* — meaning every row would have shown a delete button regardless of actual permission. Fixed to call `canDelete(file)` per row, matching how `FileCard` already correctly did it.
+
+### Manual testing results (all executed against a running Postgres + Express + Next.js stack, including live Socket.IO)
+
+| Scenario | Result |
+|---|---|
+| Union query: one file via each of 3 paths (general upload, task attachment, issue attachment) → all 3 appear in both Workspace and Project Files views, zero duplication | ✅ |
+| Search, category filter (image/document), and sort (newest/oldest/name/size) all correct across the union | ✅ |
+| Valid PNG upload reaches the Cloudinary network boundary cleanly (RBAC, validation, filename sanitization all pass) | ✅ |
+| Oversized upload (16MB vs 15MB limit) → clean 400, verified on both the new file route and the pre-existing task attachment route | ✅ |
+| Dangerous/unsupported file type → clean 400 | ✅ |
+| Path traversal / XSS-shaped / unicode filenames → all safely sanitized | ✅ |
+| Issue attachment: upload (mocked), appears in `GET /issues/:id`, non-uploader/non-manager delete → 403, uploader delete → 200 and DB row actually removed | ✅ |
+| Chat file-sharing: shared file (mocked) appears in the message thread **and** the Workspace Files view from the same row; plain text messages unaffected (`file_id: null`, no regression) | ✅ |
+| Live Socket.IO: real-time chat delivery and the `taskEvents`/`issueEvents` → socket bridge both re-verified working after all backend changes | ✅ |
+| Full regression: auth → workspace → Workspace Files endpoint → project → Project Files endpoint → task → Kanban move → issue → issue's `attachments` field → workspace chat | ✅ (10/10) |
+| Frontend production build → all 15 routes compile clean, zero new lint warnings | ✅ |
+
+### Known limitations
+
+- **Cloudinary itself is untestable in this sandbox** — no network access to cloudinary.com and no real credentials, the same disclosed limitation as every Cloudinary-touching checkpoint since Checkpoint 4. Everything up to and including the exact point of the real network call has been verified; the actual upload/delete calls have not.
+- **Pre-migration-007 task attachments have no `public_id`.** They still delete cleanly from PostgreSQL (the fixed `deleteResource` treats a missing `public_id` as a no-op rather than an error), but nothing was ever recorded to clean up on the Cloudinary side for files uploaded before this checkpoint — a real, documented gap, not a silently swallowed failure.
+- **No orphan-cleanup job.** If a Cloudinary delete succeeds but the subsequent database delete fails, the failure is logged clearly (not silently swallowed) but there's no automated reconciliation sweep — out of scope for this checkpoint, flagged rather than pretended away.
+- Not verified in an actual browser — same disclosed limitation as every UI checkpoint in this project so far; everything above is verified via the API/socket layer directly and a clean production build.
+
 
 ## Checkpoint 6 — Real-Time Chat
 
@@ -350,53 +419,52 @@ collabsphere/
 ├── backend/
 │   └── src/
 │       ├── controllers/
-│       │   ├── auth.controller.js, workspace.controller.js, workspaceInvitation.controller.js, project.controller.js
-│       │   ├── task.controller.js, label.controller.js       (Checkpoint 4)
-│       │   └── issue.controller.js                            (new, Checkpoint 5)
+│       │   ├── auth / workspace / workspaceInvitation / project / task / label / issue .controller.js
+│       │   ├── chat.controller.js                             (Checkpoint 6)
+│       │   └── file.controller.js                              (new, Checkpoint 7)
 │       ├── services/
 │       │   ├── user / refreshToken / passwordReset / workspace / workspaceMember / workspaceInvitation
-│       │   │   / workspaceActivity / project / projectMember .service.js
-│       │   ├── task.service.js, taskComment/taskLabel/taskAttachment/taskActivity .service.js  (Checkpoint 4;
-│       │   │   taskLabel.service.js gained attachToIssue/detachFromIssue, additive only)
-│       │   └── issue.service.js, issueComment.service.js, issueHistory.service.js  (new, Checkpoint 5)
+│       │   │   / workspaceActivity / project / projectMember / task* / issue* .service.js
+│       │   ├── conversation.service.js, message.service.js     (Checkpoint 6; message.service.js gained
+│       │   │   file_id support in Checkpoint 7)
+│       │   └── file.service.js, issueAttachment.service.js     (new, Checkpoint 7; taskAttachment.service.js
+│       │       gained public_id/resource_type/folder, additive)
 │       ├── middleware/
-│       │   ├── authenticate.js, requireWorkspaceRole.js, validate.js, errorHandler.js, loadProject.js
-│       │   ├── loadTask.js, taskValidators.js, upload.js   (Checkpoint 4)
-│       │   └── loadIssue.js, issueValidators.js             (new, Checkpoint 5)
+│       │   ├── authenticate.js, requireWorkspaceRole.js, validate.js, errorHandler.js (Checkpoint 7: now
+│       │   │   translates Multer errors into proper 400s), loadProject/Task/Issue/Conversation.js
+│       │   └── loadFile.js, fileValidators.js                  (new, Checkpoint 7)
 │       ├── routes/
-│       │   ├── auth.routes.js, workspace.routes.js (+label routes),
-│       │   │   project.routes.js (+ GET /:id/issues), task.routes.js
-│       │   └── issue.routes.js                              (new, Checkpoint 5)
+│       │   ├── auth / workspace (+chat, +files) / project (+chat, +files) / task / issue (+attachments) /
+│       │   │   chat (+file-message) .routes.js
+│       │   └── file.routes.js                                  (new, Checkpoint 7)
 │       ├── utils/
-│       │   ├── cloudinary.js, taskEvents.js                 (Checkpoint 4)
-│       │   └── issueEvents.js                                (new, Checkpoint 5)
-│       └── database/migrations/  001–005  (005_issues.sql new)
+│       │   ├── cloudinary.js (Checkpoint 4; Checkpoint 7 added deleteResource, filename sanitization,
+│       │   │   configurable size limit), taskEvents.js, issueEvents.js, messageEvents.js
+│       │   └── fileEvents.js                                    (new, Checkpoint 7)
+│       └── database/migrations/  001–007  (007_files.sql new — extends task_attachments, adds
+│           issue_attachments/files, adds messages.file_id)
 └── frontend/
     └── src/
         ├── app/
-        │   ├── dashboard/, login/, ..., workspaces/[workspaceId]/, projects/, projects/[projectId]/, tasks/
-        │   └── issues/                                        (new, Checkpoint 5)
+        │   ├── dashboard/, login/, ..., workspaces/[workspaceId]/ (+Files tab), projects/[projectId]/ (+Files tab)
+        │   └── tasks/, issues/, chat/
         ├── components/
-        │   ├── AppShell.js, Sidebar.js, workspaces/*, projects/*
-        │   ├── tasks/  (TaskCard, KanbanColumn, KanbanBoard, TaskDetailsDrawer — now +Related Issues —
-        │   │           CreateTaskModal, EditTaskModal, CommentPanel, AttachmentPanel, LabelSelector,
-        │   │           ActivityTimeline, TaskTable)
-        │   ├── issues/  (new: CreateIssueModal, EditIssueModal, IssueDetailsDrawer, IssueCommentPanel,
-        │   │            IssueHistoryTimeline, IssueTable)
-        │   └── ui/  (+ new: IssueStatusBadge, SeverityBadge, IssueTypeBadge; Tabs gained an optional
-        │             count prop, backward compatible; PriorityBadge reused as-is for issues)
+        │   ├── AppShell.js, Sidebar.js, workspaces/*, projects/*, tasks/*, issues/* (+IssueAttachmentPanel,
+        │   │   Checkpoint 7), chat/* (MessageBubble now renders shared files, Checkpoint 7)
+        │   └── files/                                           (new, Checkpoint 7: FileManager, FileCard,
+        │       FileList, FilePreview, FileDropzone, FileTypeIcon)
         ├── hooks/
-        │   ├── useAuth.js, useWorkspaces.js, useProjects.js, useTasks.js
-        │   └── useIssues.js                                    (new, Checkpoint 5)
-        └── lib/apiClient.js
+        │   ├── useAuth/Workspaces/Projects/Tasks/Issues/Chat/Socket.js
+        │   └── useFiles.js                                      (new, Checkpoint 7)
+        └── lib/apiClient.js, uploadWithProgress.js               (new, Checkpoint 7 — XHR-based, for real
+            upload progress; fetch has no progress API)
 ```
 
 ## Roadmap (next checkpoints)
 
-1. File Management (Cloudinary — needs real-credential verification, see Known Limitations)
-2. Notifications + Activity Logs (the general module, superseding the narrow per-entity trails built so far — chat's `messageEvents` and Checkpoint 6's Socket.IO layer are ready to broadcast these too)
-3. Dashboard & Analytics
-4. Deployment configs for Vercel / Render / Neon — Git workflow and deployment prep complete (see Git workflow / Deployment architecture below); the actual push and cloud deployment require credentials this sandbox doesn't have, see delivery notes
+1. Notifications + Activity Logs (the general module, superseding the narrow per-entity trails built so far — chat's `messageEvents`, Checkpoint 6's Socket.IO layer, and now `fileEvents` are all ready to broadcast these too)
+2. Dashboard & Analytics
+3. Deploy Checkpoint 7 to `production` (currently on `staging` only — pending PR review and manual merge, see Git workflow) and actual Vercel/Render/Neon deployment with real credentials (prep complete, see Deployment architecture; execution requires credentials this sandbox doesn't have)
 
 ## Git workflow
 
@@ -441,7 +509,7 @@ A `render.yaml` Blueprint at the repo root lets Render provision the backend ser
 1. Push `production` and `staging` to GitHub (see the exact commands in the delivery notes).
 2. Neon: create a project, copy its pooled connection string into `DATABASE_URL`.
 3. Render: New → Blueprint → point at this repo's `render.yaml` → fill in the `sync: false` secrets (JWT secrets, `DATABASE_URL`, email credentials) → deploy from `production`.
-4. Run `node src/database/migrations/../migrate.js` (or Render's shell) once against the Neon database to apply all 6 migrations.
+4. Run `node src/database/migrations/../migrate.js` (or Render's shell) once against the Neon database to apply all 7 migrations.
 5. Vercel: New Project → this repo → set **Root Directory** to `frontend` → add `NEXT_PUBLIC_API_URL` pointing at the Render backend's `/api` path → deploy from `production`.
 6. Go back to Render and set `CLIENT_URL` to the resulting Vercel URL (CORS needs the real frontend origin, not a guess made before it exists).
 
