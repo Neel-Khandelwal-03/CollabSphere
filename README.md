@@ -396,4 +396,52 @@ collabsphere/
 1. File Management (Cloudinary — needs real-credential verification, see Known Limitations)
 2. Notifications + Activity Logs (the general module, superseding the narrow per-entity trails built so far — chat's `messageEvents` and Checkpoint 6's Socket.IO layer are ready to broadcast these too)
 3. Dashboard & Analytics
-4. Deployment configs for Vercel / Render / Neon
+4. Deployment configs for Vercel / Render / Neon — Git workflow and deployment prep complete (see Git workflow / Deployment architecture below); the actual push and cloud deployment require credentials this sandbox doesn't have, see delivery notes
+
+## Git workflow
+
+```
+staging
+  ↓ develop checkpoint
+  ↓ checkpoint complete
+  ↓ test checkpoint + regression test
+  ↓ push staging → origin/staging
+  ↓ test staging
+  ↓ Pull Request: staging → production
+  ↓ merge
+production
+  ↓ deploy
+  ↓ production smoke test
+```
+
+`production` contains only tested, approved checkpoints and is never developed on directly. All checkpoint work happens on `staging`; a Pull Request merges `staging` into `production` only after the checkpoint is complete and regression-tested. As of this document, `production` and `staging` point at the identical commit — everything through Checkpoint 6, including the post-Checkpoint-5 fixes.
+
+**Starting Checkpoint 7** (or any future checkpoint) follows this sequence: `git checkout staging`, `git pull origin staging`, build only that checkpoint, run its tests plus the full regression suite, review `git diff`/`git status` to confirm only the necessary files changed, commit, push to `origin/staging`, verify on the staging environment, then open a `staging → production` Pull Request and merge only after it passes.
+
+## Deployment architecture
+
+```
+Vercel
+  └─ Next.js frontend
+       ↓ HTTPS + WebSocket, cross-origin
+Render
+  └─ Express REST API + Socket.IO (single Node process, one HTTP server)
+       ↓ TLS
+Neon
+  └─ PostgreSQL
+```
+
+Cloudinary is provisioned and referenced in the backend's `.env.example` but not yet load-bearing — it becomes required once the File Management checkpoint is built (see Roadmap).
+
+**CORS and cross-origin cookies are already production-configured in the application code, not something this deployment pass needed to add**: `app.js`'s CORS and `utils/socket.js`'s Socket.IO CORS both read `origin` from `CLIENT_URL` rather than a hardcoded value or wildcard, and the refresh-token cookie's `secure`/`sameSite` attributes are conditional on `NODE_ENV=production` (`Secure; SameSite=None` in production, `SameSite=Lax` over plain HTTP in development) — exactly what cross-origin Vercel↔Render cookie delivery requires. Setting the right environment variables on Render is what activates this; no code changes were needed.
+
+A `render.yaml` Blueprint at the repo root lets Render provision the backend service (root directory, build/start commands, health check) from one file instead of manual dashboard configuration — secret values are declared (so Render prompts for them) but never given values in the file itself.
+
+**What actually deploying requires** (this sandbox has no network access to render.com, vercel.com, or neon.tech, and no accounts/API keys for any of them — this part has to happen from your machine/dashboard):
+1. Push `production` and `staging` to GitHub (see the exact commands in the delivery notes).
+2. Neon: create a project, copy its pooled connection string into `DATABASE_URL`.
+3. Render: New → Blueprint → point at this repo's `render.yaml` → fill in the `sync: false` secrets (JWT secrets, `DATABASE_URL`, email credentials) → deploy from `production`.
+4. Run `node src/database/migrations/../migrate.js` (or Render's shell) once against the Neon database to apply all 6 migrations.
+5. Vercel: New Project → this repo → set **Root Directory** to `frontend` → add `NEXT_PUBLIC_API_URL` pointing at the Render backend's `/api` path → deploy from `production`.
+6. Go back to Render and set `CLIENT_URL` to the resulting Vercel URL (CORS needs the real frontend origin, not a guess made before it exists).
+
