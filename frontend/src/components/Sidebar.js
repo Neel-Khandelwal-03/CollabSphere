@@ -37,7 +37,7 @@ const NAV_ITEMS = [
   // links to the natural entry point rather than inventing a new page,
   // which the instruction for this fix explicitly said not to do.
   { href: '/workspaces', label: 'Files', icon: FolderOpen },
-  { href: '#', label: 'Analytics', icon: BarChart3, comingSoon: true },
+  { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/notifications', label: 'Notifications', icon: Bell },
 ];
 
