@@ -32,6 +32,23 @@ export function useWorkspaceMembers(workspaceId) {
   });
 }
 
+/**
+ * Thin reshape of useWorkspaceMembers for MentionTextarea's candidate
+ * format ({id, name, avatarUrl}) — not a new data source, since
+ * workspace membership is already exactly who's mentionable in task/
+ * issue comments and group chat (the backend enforces the same set
+ * server-side via resolveValidMentions). DM mention scoping is narrower
+ * (just the other participant) and handled by the caller directly
+ * rather than through this hook, since it isn't workspace-membership-based.
+ */
+export function useMentionableUsers(workspaceId) {
+  const { data: members, ...rest } = useWorkspaceMembers(workspaceId);
+  return {
+    ...rest,
+    data: members?.map((m) => ({ id: m.user_id, name: m.name, avatarUrl: m.avatar_url })),
+  };
+}
+
 export function useCreateWorkspace() {
   const qc = useQueryClient();
   return useMutation({

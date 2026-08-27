@@ -13,6 +13,7 @@ import PriorityBadge from '@/components/ui/PriorityBadge';
 import AvatarStack from '@/components/ui/AvatarStack';
 import CreateProjectModal from '@/components/projects/CreateProjectModal';
 import { useProjects } from '@/hooks/useProjects';
+import ErrorState from '@/components/ui/ErrorState';
 
 function useDebounced(value, delay = 300) {
   const [debounced, setDebounced] = useState(value);
@@ -32,7 +33,7 @@ export default function ProjectsPage() {
   const [createOpen, setCreateOpen] = useState(false);
 
   const search = useDebounced(searchInput);
-  const { data: projects, isLoading } = useProjects({ search, status, priority, archived, sort });
+  const { data: projects, isLoading, isError, refetch } = useProjects({ search, status, priority, archived, sort });
 
   return (
     <AppShell
@@ -92,7 +93,11 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {!isLoading && projects?.length === 0 && (
+      {isError && (
+        <ErrorState message="Unable to load projects." onRetry={refetch} className="mt-8" />
+      )}
+
+      {!isLoading && !isError && projects?.length === 0 && (
         <Card className="mt-8 flex flex-col items-center gap-3 p-12 text-center">
           <FolderKanban className="h-8 w-8 text-brand" />
           <p className="font-display text-base font-semibold text-ink">No projects found</p>

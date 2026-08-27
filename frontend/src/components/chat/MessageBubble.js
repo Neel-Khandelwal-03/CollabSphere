@@ -7,6 +7,7 @@ import Avatar from '@/components/ui/Avatar';
 import { Textarea } from '@/components/ui/Select';
 import Button from '@/components/ui/Button';
 import FileTypeIcon from '@/components/files/FileTypeIcon';
+import MentionText from '@/components/mentions/MentionText';
 import { formatFileSize } from '@/lib/utils';
 
 function isImage(mimeType) {
@@ -73,7 +74,14 @@ export default function MessageBubble({ message, isOwn, canModerate, onEdit, onD
                   isOwn ? 'rounded-tr-sm bg-brand text-white' : 'rounded-tl-sm bg-ink/[0.04] text-ink'
                 }`}
               >
-                {message.content}
+                <MentionText
+                  text={message.content}
+                  mentionClassName={
+                    isOwn
+                      ? 'rounded bg-white/25 px-1 py-0.5 font-medium'
+                      : 'rounded bg-brand-tint px-1 py-0.5 font-medium text-brand-strong'
+                  }
+                />
               </div>
             )}
 

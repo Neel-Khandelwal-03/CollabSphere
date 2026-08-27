@@ -33,6 +33,13 @@ import InviteMemberModal from '@/components/workspaces/InviteMemberModal';
 import CreateProjectModal from '@/components/projects/CreateProjectModal';
 import ChatPanel from '@/components/chat/ChatPanel';
 import FileManager from '@/components/files/FileManager';
+import ActivityTimeline from '@/components/activity/ActivityTimeline';
+import dynamic from 'next/dynamic';
+
+const WorkspaceAnalyticsTab = dynamic(() => import('@/components/analytics/WorkspaceAnalyticsTab'), {
+  loading: () => <p className="mt-6 text-center text-sm text-muted">Loading analytics...</p>,
+  ssr: false,
+});
 import { useAuthStore } from '@/store/authStore';
 import {
   useWorkspace,
@@ -42,6 +49,7 @@ import {
   useLeaveWorkspace,
   useUpdateMemberRole,
   useRemoveMember,
+  useMentionableUsers,
 } from '@/hooks/useWorkspaces';
 import { useWorkspaceProjects } from '@/hooks/useProjects';
 import { useWorkspaceChat, useDeleteConversation } from '@/hooks/useChat';
@@ -52,6 +60,8 @@ const TABS = [
   { key: 'projects', label: 'Projects' },
   { key: 'chat', label: 'Chat' },
   { key: 'files', label: 'Files' },
+  { key: 'activity', label: 'Activity' },
+  { key: 'analytics', label: 'Analytics' },
   { key: 'members', label: 'Members' },
   { key: 'settings', label: 'Settings' },
 ];
@@ -212,7 +222,7 @@ function MembersTab({ workspaceId, members, membersLoading, canManage, currentUs
     <div className="mt-6">
       <Card className="p-6">
         <p className="font-mono text-xs uppercase tracking-wider text-muted">
-          Members ({members?.length ?? 0})
+          {membersLoading ? 'Members' : `Members (${members?.length ?? 0})`}
         </p>
         <div className="mt-4 space-y-1">
           {membersLoading && <p className="text-sm text-muted">Loading members...</p>}
@@ -362,6 +372,7 @@ export default function WorkspaceDetailPage() {
   const { data, isLoading, error } = useWorkspace(workspaceId);
   const { data: members, isLoading: membersLoading } = useWorkspaceMembers(workspaceId);
   const { data: chatData } = useWorkspaceChat(workspaceId);
+  const { data: mentionableUsers } = useMentionableUsers(workspaceId);
 
   const deleteWorkspace = useDeleteWorkspace();
   const leaveWorkspace = useLeaveWorkspace();
@@ -370,6 +381,18 @@ export default function WorkspaceDetailPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [deleteChatOpen, setDeleteChatOpen] = useState(false);
+
+  // Deep-links a specific tab, e.g. from a search result (?tab=files).
+  // Read via window.location directly rather than useSearchParams() —
+  // that hook requires wrapping this whole (large, pre-existing)
+  // component in a Suspense boundary to avoid breaking static
+  // optimization, a bigger structural change than this small feature
+  // warrants; a one-time read on mount achieves the same deep-link
+  // behavior with no such requirement.
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab && TABS.some((t) => t.key === tab)) setActiveTab(tab);
+  }, []);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
 
@@ -459,6 +482,7 @@ export default function WorkspaceDetailPage() {
                 initialMessages={chatData.messages}
                 initialReadStates={chatData.readStates}
                 myRole={myRole}
+                mentionCandidates={mentionableUsers || []}
                 className="flex-1"
               />
             </>
@@ -470,6 +494,16 @@ export default function WorkspaceDetailPage() {
       {activeTab === 'files' && (
         <div className="mt-6">
           <FileManager scope={{ type: 'workspace', workspaceId }} myRole={myRole} />
+        </div>
+      )}
+      {activeTab === 'activity' && (
+        <div className="mt-6">
+          <ActivityTimeline scope={{ type: 'workspace', workspaceId }} />
+        </div>
+      )}
+      {activeTab === 'analytics' && (
+        <div className="mt-6">
+          <WorkspaceAnalyticsTab workspaceId={workspaceId} />
         </div>
       )}
       {activeTab === 'members' && (

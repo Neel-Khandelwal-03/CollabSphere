@@ -158,12 +158,25 @@ async function remove(conversationId) {
   await db.query('DELETE FROM conversations WHERE id = $1', [conversationId]);
 }
 
+/**
+ * Only meaningful for type='direct' conversations — workspace/project
+ * chat participation is implicit via workspace membership (see
+ * isParticipant above) rather than rows in this table.
+ */
+async function listParticipants(conversationId) {
+  const { rows } = await db.query('SELECT user_id FROM conversation_participants WHERE conversation_id = $1', [
+    conversationId,
+  ]);
+  return rows.map((r) => r.user_id);
+}
+
 module.exports = {
   findById,
   getOrCreateWorkspaceConversation,
   getOrCreateProjectConversation,
   getOrCreateDirectConversation,
   isParticipant,
+  listParticipants,
   listDirectForUser,
   remove,
 };

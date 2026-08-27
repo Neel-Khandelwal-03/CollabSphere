@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Plus, RotateCcw } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -38,7 +38,7 @@ export default function IssueTable({ projectId, onIssueClick, showProjectColumn 
   const useScoped = !!projectId && !showProjectColumn;
   const globalQuery = useIssues(projectId ? { ...filters, projectId } : filters, { enabled: !useScoped });
   const scopedQuery = useProjectIssues(projectId, filters, { enabled: useScoped });
-  const { data, isLoading } = useScoped ? scopedQuery : globalQuery;
+  const { data, isLoading, isError, refetch } = useScoped ? scopedQuery : globalQuery;
 
   const issues = data?.issues || [];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -123,7 +123,20 @@ export default function IssueTable({ projectId, onIssueClick, showProjectColumn 
             {isLoading && (
               <tr><td colSpan={10} className="px-4 py-8 text-center text-muted">Loading...</td></tr>
             )}
-            {!isLoading && issues.length === 0 && (
+            {isError && (
+              <tr>
+                <td colSpan={10} className="px-4 py-8 text-center">
+                  <p className="text-sm text-danger">Unable to load issues.</p>
+                  <button
+                    onClick={() => refetch()}
+                    className="mt-2 inline-flex items-center gap-1.5 text-sm text-brand hover:underline"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Try again
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!isLoading && !isError && issues.length === 0 && (
               <tr>
                 <td colSpan={10} className="px-4 py-10 text-center">
                   <p className="text-sm text-muted">

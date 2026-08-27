@@ -31,7 +31,15 @@ import CreateIssueModal from '@/components/issues/CreateIssueModal';
 import IssueDetailsDrawer from '@/components/issues/IssueDetailsDrawer';
 import ChatPanel from '@/components/chat/ChatPanel';
 import FileManager from '@/components/files/FileManager';
+import ActivityTimeline from '@/components/activity/ActivityTimeline';
+import dynamic from 'next/dynamic';
+
+const ProjectAnalyticsTab = dynamic(() => import('@/components/analytics/ProjectAnalyticsTab'), {
+  loading: () => <p className="mt-6 text-center text-sm text-muted">Loading analytics...</p>,
+  ssr: false,
+});
 import { useProject, useDeleteProject, useArchiveProject, useRestoreProject, useUpdateProject } from '@/hooks/useProjects';
+import { useMentionableUsers } from '@/hooks/useWorkspaces';
 import { useProjectTasks } from '@/hooks/useTasks';
 import { useProjectIssues } from '@/hooks/useIssues';
 import { useProjectChat, useDeleteConversation } from '@/hooks/useChat';
@@ -42,6 +50,8 @@ const TABS = [
   { key: 'issues', label: 'Issues' },
   { key: 'chat', label: 'Chat' },
   { key: 'files', label: 'Files' },
+  { key: 'activity', label: 'Activity' },
+  { key: 'analytics', label: 'Analytics' },
   { key: 'overview', label: 'Overview' },
   { key: 'members', label: 'Members' },
   { key: 'settings', label: 'Settings' },
@@ -242,6 +252,7 @@ export default function ProjectDetailsPage() {
   const { data: tasks, isLoading: tasksLoading } = useProjectTasks(projectId);
   const { data: issuesData } = useProjectIssues(projectId, { pageSize: 1 });
   const { data: chatData } = useProjectChat(projectId);
+  const { data: mentionableUsers } = useMentionableUsers(data?.project?.workspace_id);
 
   const deleteProject = useDeleteProject(data?.project?.workspace_id);
   const archiveProject = useArchiveProject(projectId, data?.project?.workspace_id);
@@ -253,6 +264,13 @@ export default function ProjectDetailsPage() {
   const [deleteChatOpen, setDeleteChatOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+
+  // Same tab deep-linking as Workspace Details — see that page for why
+  // this reads window.location directly instead of useSearchParams().
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab && TABS.some((t) => t.key === tab)) setActiveTab(tab);
+  }, []);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [createTaskStatus, setCreateTaskStatus] = useState('backlog');
   const [activeTaskId, setActiveTaskId] = useState(null);
@@ -391,6 +409,7 @@ export default function ProjectDetailsPage() {
                 initialMessages={chatData.messages}
                 initialReadStates={chatData.readStates}
                 myRole={myRole}
+                mentionCandidates={mentionableUsers || []}
                 className="flex-1"
               />
             </>
@@ -403,6 +422,18 @@ export default function ProjectDetailsPage() {
       {activeTab === 'files' && (
         <div className="mt-6">
           <FileManager scope={{ type: 'project', projectId, workspaceId: project.workspace_id }} myRole={myRole} />
+        </div>
+      )}
+
+      {activeTab === 'activity' && (
+        <div className="mt-6">
+          <ActivityTimeline scope={{ type: 'project', projectId, workspaceId: project.workspace_id }} />
+        </div>
+      )}
+
+      {activeTab === 'analytics' && (
+        <div className="mt-6">
+          <ProjectAnalyticsTab projectId={projectId} />
         </div>
       )}
 

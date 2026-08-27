@@ -3,6 +3,8 @@ const ApiError = require('../utils/ApiError');
 const projectService = require('../services/project.service');
 const projectMemberService = require('../services/projectMember.service');
 const workspaceMemberService = require('../services/workspaceMember.service');
+const notificationService = require('../services/notification.service');
+const activityLogService = require('../services/activityLog.service');
 
 function pickListFilters(query) {
   return {
@@ -29,6 +31,17 @@ const createProject = asyncHandler(async (req, res) => {
     deadline,
     createdBy: req.user.id,
   });
+
+  await activityLogService.log({
+    workspaceId,
+    projectId: project.id,
+    actorId: req.user.id,
+    action: 'project.created',
+    entityType: 'project',
+    entityId: project.id,
+    newValue: { name },
+  });
+
   res.status(201).json({ success: true, data: { project } });
 });
 
@@ -127,6 +140,27 @@ const addProjectMember = asyncHandler(async (req, res) => {
 
   await projectMemberService.addMember(projectId, userId, req.user.id);
   const members = await projectMemberService.listMembers(projectId);
+
+  await activityLogService.log({
+    workspaceId: req.project.workspace_id,
+    projectId,
+    actorId: req.user.id,
+    action: 'project.member_added',
+    entityType: 'project_member',
+    entityId: userId,
+  });
+
+  await notificationService.notify({
+    userId,
+    actorId: req.user.id,
+    type: 'PROJECT_MEMBER_ADDED',
+    title: 'You were added to a project',
+    message: `${req.user.name} added you to "${req.project.name}"`,
+    entityType: 'project',
+    entityId: projectId,
+    metadata: { projectName: req.project.name },
+  });
+
   res.status(201).json({ success: true, data: { members } });
 });
 
@@ -139,6 +173,27 @@ const removeProjectMember = asyncHandler(async (req, res) => {
 
   await projectMemberService.removeMember(memberId);
   const members = await projectMemberService.listMembers(projectId);
+
+  await activityLogService.log({
+    workspaceId: req.project.workspace_id,
+    projectId,
+    actorId: req.user.id,
+    action: 'project.member_removed',
+    entityType: 'project_member',
+    entityId: member.user_id,
+  });
+
+  await notificationService.notify({
+    userId: member.user_id,
+    actorId: req.user.id,
+    type: 'PROJECT_MEMBER_REMOVED',
+    title: 'You were removed from a project',
+    message: `${req.user.name} removed you from "${req.project.name}"`,
+    entityType: 'project',
+    entityId: projectId,
+    metadata: { projectName: req.project.name },
+  });
+
   res.json({ success: true, data: { members } });
 });
 

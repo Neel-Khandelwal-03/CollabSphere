@@ -1,40 +1,47 @@
 'use client';
 
 import Link from 'next/link';
-import { Boxes, CheckSquare, FolderKanban, Users, ArrowRight } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import {
+  Boxes, CheckSquare, FolderKanban, ArrowRight, AlertCircle,
+  Bell, FileText, CheckCircle2, Clock,
+} from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import { Card } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import StatusBadge from '@/components/ui/StatusBadge';
 import PriorityBadge from '@/components/ui/PriorityBadge';
+import StatCard from '@/components/analytics/StatCard';
+import { describeActivity } from '@/components/activity/describeActivity';
 import { useAuthStore } from '@/store/authStore';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 import { useProjects } from '@/hooks/useProjects';
-import { useTasks } from '@/hooks/useTasks';
+import { useDashboardAnalytics } from '@/hooks/useAnalytics';
+import ErrorState from '@/components/ui/ErrorState';
+
+const DEADLINE_LABELS = { overdue: 'Overdue', today: 'Due today', tomorrow: 'Due tomorrow', this_week: 'Due this week' };
+const DEADLINE_STYLES = {
+  overdue: 'text-danger',
+  today: 'text-brand-strong',
+  tomorrow: 'text-ink',
+  this_week: 'text-muted',
+};
 
 export default function DashboardPage() {
   const user = useAuthStore((s) => s.user);
   const { data: workspaces, isLoading: workspacesLoading } = useWorkspaces();
   const { data: projects, isLoading: projectsLoading } = useProjects({ sort: 'newest' });
-  // Root cause of the "Tasks assigned" bug: this stat was a literal
-  // hardcoded string ('0'), never wired to any query at all — not a stale
-  // cache, not a wrong column, not a missing invalidation. It just never
-  // queried anything. Fixed by reusing the existing GET /api/tasks
-  // endpoint's assignedTo filter (already correctly backed by
-  // tasks.assigned_to in task.service.js) with pageSize:1, the same
-  // "count-only" convention already used for the Issues tab's badge count
-  // — so no new backend endpoint, no new query-key shape.
-  const { data: assignedTasks } = useTasks({ assignedTo: user?.id, pageSize: 1 });
+  const { data: analytics, isLoading: analyticsLoading, isError: analyticsError, refetch: refetchAnalytics } = useDashboardAnalytics();
 
   const stats = [
-    { label: 'Workspaces', value: workspaces?.length ?? '—', icon: Boxes },
-    { label: 'Projects', value: projects?.length ?? '—', icon: FolderKanban },
-    { label: 'Tasks assigned', value: assignedTasks?.total ?? '—', icon: CheckSquare },
-    {
-      label: 'Total members',
-      value: workspaces?.reduce((sum, w) => sum + w.member_count, 0) ?? '—',
-      icon: Users,
-    },
+    { label: 'Workspaces', value: analytics?.totalWorkspaces, icon: Boxes },
+    { label: 'Projects', value: analytics?.totalProjects, icon: FolderKanban },
+    { label: 'Tasks', value: analytics?.totalTasks, icon: CheckSquare },
+    { label: 'Tasks completed', value: analytics?.completedTasks, icon: CheckCircle2 },
+    { label: 'Open issues', value: analytics?.openIssues, icon: AlertCircle },
+    { label: 'Issues resolved', value: analytics?.resolvedIssues, icon: CheckCircle2 },
+    { label: 'Unread notifications', value: analytics?.unreadNotifications, icon: Bell },
+    { label: 'Files uploaded', value: analytics?.filesUploaded, icon: FileText },
   ];
 
   return (
@@ -47,14 +54,58 @@ export default function DashboardPage() {
         Here&apos;s what&apos;s happening across your workspaces.
       </p>
 
-      <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {stats.map(({ label, value, icon: Icon }) => (
-          <Card key={label} className="p-5">
-            <Icon className="h-4 w-4 text-brand" />
-            <p className="mt-3 font-display text-2xl font-semibold text-ink">{value}</p>
-            <p className="mt-1 text-xs text-muted">{label}</p>
-          </Card>
-        ))}
+      {analyticsError ? (
+        <ErrorState message="Unable to load your stats." onRetry={refetchAnalytics} className="mt-8" />
+      ) : (
+        <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {stats.map(({ label, value, icon }) => (
+            <StatCard key={label} label={label} value={value} icon={icon} loading={analyticsLoading} />
+          ))}
+        </div>
+      )}
+
+      <div className="mt-8 grid gap-4 lg:grid-cols-2">
+        <Card className="p-5">
+          <div className="flex items-center gap-1.5">
+            <Clock className="h-4 w-4 text-brand" />
+            <p className="font-mono text-xs uppercase tracking-wider text-muted">Upcoming deadlines</p>
+          </div>
+          <div className="mt-3 space-y-2.5">
+            {analyticsLoading && <p className="text-sm text-muted">Loading...</p>}
+            {!analyticsLoading && (!analytics?.upcomingDeadlines || analytics.upcomingDeadlines.length === 0) && (
+              <p className="py-4 text-center text-sm text-muted">Nothing due in the next 7 days.</p>
+            )}
+            {analytics?.upcomingDeadlines?.map((d) => (
+              <Link key={`${d.type}-${d.id}`} href={d.href} className="flex items-center justify-between gap-2 hover:opacity-80">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-ink">{d.title}</p>
+                  <p className="truncate text-xs text-muted">{d.context}</p>
+                </div>
+                <span className={`shrink-0 text-xs font-medium ${DEADLINE_STYLES[d.bucket]}`}>
+                  {DEADLINE_LABELS[d.bucket]}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <p className="font-mono text-xs uppercase tracking-wider text-muted">Recent activity</p>
+          <div className="mt-3 space-y-2.5">
+            {analyticsLoading && <p className="text-sm text-muted">Loading...</p>}
+            {!analyticsLoading && (!analytics?.recentActivity || analytics.recentActivity.length === 0) && (
+              <p className="py-4 text-center text-sm text-muted">No activity yet.</p>
+            )}
+            {analytics?.recentActivity?.slice(0, 6).map((a) => (
+              <div key={a.id}>
+                <p className="text-sm text-ink">{describeActivity(a)}</p>
+                <p className="text-xs text-muted">
+                  {formatDistanceToNow(new Date(a.created_at), { addSuffix: true })} · {a.workspace_name}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Card>
       </div>
 
       <div className="mt-8 flex items-center justify-between">

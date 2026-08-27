@@ -2,6 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const fileService = require('../services/file.service');
 const projectService = require('../services/project.service');
+const activityLogService = require('../services/activityLog.service');
 const { uploadBuffer, deleteResource } = require('../utils/cloudinary');
 const fileEvents = require('../utils/fileEvents');
 
@@ -53,6 +54,17 @@ const uploadFile = asyncHandler(async (req, res) => {
   });
 
   fileEvents.emit('uploaded', { file, actorId: req.user.id });
+
+  await activityLogService.log({
+    workspaceId,
+    projectId: projectId || null,
+    actorId: req.user.id,
+    action: 'file.uploaded',
+    entityType: 'file',
+    entityId: file.id,
+    newValue: { name: req.file.originalname },
+  });
+
   res.status(201).json({ success: true, data: { file } });
 });
 
@@ -117,6 +129,17 @@ const deleteFile = asyncHandler(async (req, res) => {
   }
 
   fileEvents.emit('deleted', { fileId: file.id, workspaceId: file.workspace_id, projectId: file.project_id, actorId: req.user.id });
+
+  await activityLogService.log({
+    workspaceId: file.workspace_id,
+    projectId: file.project_id,
+    actorId: req.user.id,
+    action: 'file.deleted',
+    entityType: 'file',
+    entityId: file.id,
+    oldValue: { name: file.original_name },
+  });
+
   res.json({ success: true, message: 'File deleted' });
 });
 

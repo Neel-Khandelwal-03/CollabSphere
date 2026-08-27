@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -28,7 +28,7 @@ export default function TaskTable({ projectId, onTaskClick, showProjectColumn = 
   const [page, setPage] = useState(1);
 
   const search = useDebounced(searchInput);
-  const { data, isLoading } = useTasks({ projectId, search, status, priority, sort, page, pageSize: 15 });
+  const { data, isLoading, isError, refetch } = useTasks({ projectId, search, status, priority, sort, page, pageSize: 15 });
 
   const tasks = data?.tasks || [];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -93,7 +93,20 @@ export default function TaskTable({ projectId, onTaskClick, showProjectColumn = 
                 </td>
               </tr>
             )}
-            {!isLoading && tasks.length === 0 && (
+            {isError && (
+              <tr>
+                <td colSpan={showProjectColumn ? 6 : 5} className="px-4 py-8 text-center">
+                  <p className="text-sm text-danger">Unable to load tasks.</p>
+                  <button
+                    onClick={() => refetch()}
+                    className="mt-2 inline-flex items-center gap-1.5 text-sm text-brand hover:underline"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Try again
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!isLoading && !isError && tasks.length === 0 && (
               <tr>
                 <td colSpan={showProjectColumn ? 6 : 5} className="px-4 py-8 text-center text-muted">
                   No tasks found.

@@ -1,7 +1,7 @@
 const db = require('../config/db');
 
 const SELECT_FIELDS = `
-  m.id, m.conversation_id, m.sender_id, m.content, m.edited_at, m.created_at, m.file_id,
+  m.id, m.conversation_id, m.sender_id, m.content, m.edited_at, m.created_at, m.file_id, m.mentions,
   u.name AS sender_name, u.avatar_url AS sender_avatar,
   f.original_name AS file_name, f.secure_url AS file_url, f.mime_type AS file_type,
   f.file_size AS file_size, f.resource_type AS file_resource_type
@@ -41,10 +41,10 @@ async function findById(messageId) {
   return rows[0] || null;
 }
 
-async function create(conversationId, senderId, content, fileId = null) {
+async function create(conversationId, senderId, content, fileId = null, mentions = []) {
   const { rows } = await db.query(
-    'INSERT INTO messages (conversation_id, sender_id, content, file_id) VALUES ($1, $2, $3, $4) RETURNING id',
-    [conversationId, senderId, content, fileId]
+    'INSERT INTO messages (conversation_id, sender_id, content, file_id, mentions) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+    [conversationId, senderId, content, fileId, JSON.stringify(mentions)]
   );
   return findById(rows[0].id);
 }
