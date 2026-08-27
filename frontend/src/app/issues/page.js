@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Bug, Plus } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import Button from '@/components/ui/Button';
@@ -19,10 +19,17 @@ function DeepLinkedIssue({ issueId, onResolved }) {
 }
 
 function IssuesPageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const openId = searchParams.get('open');
   const [activeIssue, setActiveIssue] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+
+  const closeIssue = () => {
+    setActiveIssue(null);
+    // Same root cause and fix as tasks/page.js's closeTask.
+    if (openId) router.replace('/issues', { scroll: false });
+  };
 
   return (
     <AppShell
@@ -59,7 +66,7 @@ function IssuesPageContent() {
         <IssueDetailsDrawer
           issueId={activeIssue.id}
           workspaceId={activeIssue.workspace_id}
-          onClose={() => setActiveIssue(null)}
+          onClose={closeIssue}
         />
       )}
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckSquare } from 'lucide-react';
 import AppShell from '@/components/AppShell';
 import TaskTable from '@/components/tasks/TaskTable';
@@ -17,9 +17,20 @@ function DeepLinkedTask({ taskId, onResolved }) {
 }
 
 function TasksPageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const openId = searchParams.get('open');
   const [activeTask, setActiveTask] = useState(null);
+
+  const closeTask = () => {
+    setActiveTask(null);
+    // Root cause of the drawer not closing: openId stayed truthy after
+    // close, so {openId && !activeTask && <DeepLinkedTask/>} immediately
+    // re-triggered, resolved from React Query's cache, and reopened the
+    // same task. Clearing the param (replace, not push, so this doesn't
+    // add a spurious back-button stop) breaks that loop for good.
+    if (openId) router.replace('/tasks', { scroll: false });
+  };
 
   return (
     <AppShell title="Tasks">
@@ -41,7 +52,7 @@ function TasksPageContent() {
         <TaskDetailsDrawer
           taskId={activeTask.id}
           workspaceId={activeTask.workspace_id}
-          onClose={() => setActiveTask(null)}
+          onClose={closeTask}
         />
       )}
     </AppShell>
