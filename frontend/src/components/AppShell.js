@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Menu, LogOut, ChevronDown } from 'lucide-react';
+import { Menu, LogOut, ChevronDown, Search } from 'lucide-react';
 import ProtectedRoute from './ProtectedRoute';
 import Sidebar from './Sidebar';
 import Avatar from './ui/Avatar';
+import NotificationBell from './notifications/NotificationBell';
+import SearchPalette from './search/SearchPalette';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/authStore';
 import { useLogout } from '@/hooks/useAuth';
@@ -17,8 +19,24 @@ function Shell({ children, title, actions }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+
+  // Cmd/Ctrl+K only — deliberately not "/" too, since that's a normal
+  // character people type constantly in comment boxes and chat
+  // composers; hijacking it there would be exactly the kind of shortcut
+  // conflict the spec's own caveat warns against.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // Read the persisted collapse state after mount (avoids an SSR/client
   // markup mismatch, since localStorage doesn't exist on the server).
@@ -96,6 +114,23 @@ function Shell({ children, title, actions }) {
 
             <div className="flex shrink-0 items-center gap-3">
               {actions}
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="hidden items-center gap-2 rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:bg-ink/[0.03] sm:flex"
+                aria-label="Search"
+              >
+                <Search className="h-3.5 w-3.5" />
+                Search
+                <kbd className="ml-2 rounded border border-line bg-ink/5 px-1.5 py-0.5 font-mono text-[10px] text-muted">⌘K</kbd>
+              </button>
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="rounded-lg p-2 text-ink hover:bg-ink/5 sm:hidden"
+                aria-label="Search"
+              >
+                <Search className="h-5 w-5" />
+              </button>
+              <NotificationBell />
               <div className="relative">
                 <button
                   onClick={() => setMenuOpen((v) => !v)}
@@ -141,6 +176,8 @@ function Shell({ children, title, actions }) {
           {children}
         </main>
       </div>
+
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
     </div>
   );
 }

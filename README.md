@@ -14,11 +14,164 @@ Developer collaboration & project management platform, built incrementally in ch
 - **GitHub workflow established**: `production`/`staging` branches created and pushed, Checkpoint 6 deployed-and-prepared for Vercel/Render/Neon (see Git workflow / Deployment architecture sections).
 - **Checkpoint 7 — File Management & Cloudinary**: complete, tested (this document). Built on `staging`, not yet merged to `production` — see Git workflow.
 - **Post-Checkpoint-7 fix**: existing Direct Messages couldn't be opened (missing error/loading state on the open-conversation mutation), Files sidebar badge corrected — both fixed and tested, committed to `staging`.
+- **Checkpoint 8 — Notifications, Activity Logs & Mentions**: complete, tested (this document). Built on `staging`, not yet merged to `production` — see Git workflow.
+- **Checkpoint 9 — Analytics, Global Search, Performance & UI Polish**: complete, tested (this document). Built on `staging`, not yet merged to `production` — see Git workflow.
 - Everything else (Notifications, Analytics, final deployment) is not started.
 - **Note**: an unrelated Shopping Cart/Products/Inventory request was received between Checkpoint 5 and 6 and correctly identified as a mismatch with this project's actual domain before any work began — flagged to the user, confirmed as a mistake, no code written for it.
 
+## Checkpoint 9 — Analytics, Global Search, Performance & UI Polish
+
+### Analytics — real SQL aggregation, not JavaScript counting
+
+Every number across Dashboard, Workspace Analytics, and Project Analytics comes from `COUNT`/`GROUP BY`/`FILTER`/`DATE_TRUNC` in PostgreSQL, never from fetching full row sets into Node and counting there — verified directly by seeding known data and confirming every returned number matched exactly, including the trickier ones (a completed-but-overdue task correctly excluded from "upcoming deadlines," a project's completion percentage computed from its actual status breakdown).
+
+Recharts was added (none of this project's prior checkpoints had a chart library) and deliberately restricted to the app's own existing 4 semantic colors (violet/green/red/gray) rather than a new chart-specific palette — matching `globals.css`'s own documented restraint ("violet is the single brand signal, green is reserved for positive states only"). Eight required chart types are covered by four reusable components (`StatusBarChart` alone covers Tasks-by-Status, Tasks-by-Priority, Issues-by-Status, and Issues-by-Severity), rather than eight near-identical one-off implementations.
+
+Team contribution is deliberately framed as an activity indicator — a plain list with proportional bars, no rank numbers, no "top performer" language — per the spec's explicit warning against presenting it as a performance score.
+
+**A real performance regression, caught before it shipped**: wiring the analytics tabs directly into Workspace/Project Details pushed Recharts into those pages' *initial* bundle — Project Details jumped from 275KB to 402KB, Workspace Details from 240KB to 354KB, confirmed by the actual build output, not assumed. Fixed with `next/dynamic` lazy-loading on both tabs; confirmed the bundles dropped straight back to their pre-analytics sizes. Recharts now only loads when someone actually opens the Analytics tab.
+
+### Global Search — structurally RBAC-scoped, not filtered after the fact
+
+Every search query is scoped to `workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = $1)` — a private workspace's projects, tasks, issues, files, and members are unreachable through this service for anyone outside it, not merely hidden from results after being fetched. Verified twice: once via direct service call, once via a real HTTP request with a genuine outsider account, both confirming zero results leak across the boundary. Search results for the spec's own worked example ("authentication") were verified to match it exactly — same project, same task, same issue.
+
+Migration `012_search_indexes.sql` adds `pg_trgm`-backed GIN indexes on every searchable name/title column, making `ILIKE '%term%'` substring search genuinely fast rather than an unindexed sequential scan on every keystroke — PostgreSQL's own native capability, per the spec's explicit preference over introducing a separate search engine.
+
+The UI is a Cmd/Ctrl+K command palette (debounced, categorized results, localStorage-only recent searches — never sent to or stored on the server, per the spec's own privacy caution), mounted once in `AppShell`. Deliberately **not** also bound to `/` — that's a character people type constantly in comment boxes and chat composers, and binding it there would be exactly the shortcut conflict the spec's own caveat warns against.
+
+A real gap found while wiring file search results: clicking a file result needed to land on a specific tab (`?tab=files`) on Workspace/Project Details, but neither page read any tab state from the URL at all. Fixed by reading `window.location.search` in a `useEffect` on mount — deliberately not `useSearchParams()`, which would have required wrapping these large, pre-existing page components in a Suspense boundary for no benefit beyond this one small feature.
+
+### Performance audit — investigated, not just narrated
+
+- **Socket.IO listener lifecycle**: read through `useChatSocket`, `useNotifications`, and the core `useSocket` provider line by line. All three were already well-built — `useChatSocket` has an explicit defensive dedup check on incoming messages (`old.some((m) => m.id === message.id) ? old : [...old, message]`), so even a duplicate event couldn't render a message twice; every `socket.on` has a matched `socket.off` in cleanup; `SocketProvider` is correctly mounted at the true persistent root (`app/layout.js`), so the actual connection survives page navigation, confirmed by reading the file rather than assuming it.
+- **Found and fixed a real, common React Query issue**: no global `staleTime` default existed, meaning most list queries (workspaces, projects, tasks, members, etc.) refetched on every single component remount — e.g. navigating away and back — even when nothing had changed. Fixed with one shared default (30s) rather than annotating dozens of individual hooks; confirmed safe since mutations already call `invalidateQueries` explicitly, which bypasses staleTime regardless, so this doesn't mask a user's own changes.
+- **Backend query audit**: every `SELECT *` in the codebase is a single-row lookup by primary key or unique constraint (findById-style functions) — not the bulk-list pattern the spec is concerned about. The genuine "list everything" endpoints (cross-workspace tasks, cross-workspace issues) already paginate. The unbounded ones (a project's full Kanban board, a task's comment thread, a workspace's member list) are legitimately bounded, per-entity collections where pagination would either break the feature (a Kanban board must show its complete set) or add complexity with no current, measurable benefit — a reviewed-and-accepted design choice, not an oversight.
+
+### UI polish — concrete fixes, not a redesign
+
+- **Loading-state anti-pattern** ("Tasks: 0" while still loading, which the spec explicitly warns against) was found in two real, specific places — the Workspaces page's mobile count label and the Members count on Workspace Details — both rendering `?? 0` with no loading gate. Fixed both. Several other similar-looking spots were checked and confirmed already correctly gated behind parent loading states — not everything examined turned out to need a fix, which is itself an honest audit outcome.
+- **A much larger, real gap in error handling**: five of the primary data-fetching surfaces (Workspaces list, Projects list, and the shared `TaskTable`/`IssueTable`/Dashboard stats) had *no* error handling at all. Traced the actual failure mode, not assumed one: `tasks = data?.tasks || []` meant a failed request would silently present as "No tasks found" — actively misleading, not just unhelpful. Built one reusable `ErrorState` component and wired it into all five, with each empty-state condition now explicitly guarded by `!isError` so a failure can no longer masquerade as "nothing here."
+- **Accessibility**: `SearchPalette`'s Escape-to-close only worked while the search input specifically had focus (an input-scoped `onKeyDown`). Replaced with the same document-level `keydown` listener and body-scroll-lock the existing `Modal` component already established — more robust, and consistent with the rest of the app rather than a second, narrower pattern.
+- Verified the collapsed-sidebar overflow fix and the portal-based tooltip fix (both from earlier checkpoints) are still intact, and confirmed neither `NotificationBell`'s dropdown nor `SearchPalette`'s overlay use viewport-relative positioning that could reintroduce that class of bug.
+
+### An honest finding: dark mode was never actually built
+
+Before treating Part 7 of this checkpoint as a "verify existing dark mode" task, the codebase was checked directly: no `.dark` class, no theme provider, no `prefers-color-scheme` media query, and no dark-variant CSS custom properties exist anywhere across all 8 prior checkpoints. There is nothing to verify because dark mode doesn't exist — the light-only palette in `globals.css` is the only theme this app has ever had.
+
+Given this, building a complete second theme (a full parallel color system, verified across every component, chart, and state) is a substantial, deliberate design undertaking in its own right — not a "verify" task, and not something to fold into an already-large checkpoint without being asked for it directly, especially given this project's explicit "do not redesign the entire application" instruction. Documented here plainly rather than either fabricating verification results for a feature that isn't there, or silently building a full theme system unprompted.
+
+### Manual testing performed (all executed live, not assumed)
+
+| Scenario | Result |
+|---|---|
+| Dashboard/Workspace/Project analytics verified against known, seeded data — every number and every chart's data matched exactly | ✅ |
+| Search results matched the spec's own worked example exactly (project/task/issue for "authentication") | ✅ |
+| Search RBAC boundary — a genuine outsider account gets zero results across every category, verified via real HTTP, not just direct service call | ✅ |
+| Bundle-size regression from lazy-loading Recharts, confirmed via actual build output before and after | ✅ |
+| `ErrorState` wiring — confirmed via code trace that the underlying data defaults (`data?.tasks || []`) previously made failures indistinguishable from empty state | ✅ |
+| Full regression, 14/14 checks across Checkpoints 1–9, including the real `DELETE /api/projects/:id` and `/api/workspaces/:id` endpoints (confirming the Checkpoint 8 cascade-ordering fix still holds) | ✅ |
+| Frontend production build clean across all 16 routes, zero new warnings, after every change made this checkpoint | ✅ |
+
+### Known limitations
+
+- Not verified in an actual browser — a genuine, fresh attempt was made this session specifically because this checkpoint is UI-heavy (not assumed unavailable from memory): `npx playwright install chromium` reports success (exit 0) but the browser binary never downloads, silently, for the same confirmed network-access reason as every prior checkpoint's attempt.
+- No dedicated full `/search` results page was built — the command palette already satisfies the spec's actual UI requirements (categorized results, click-to-navigate, keyboard shortcut), and building a second, separate results view without a clear additional requirement would be scope expansion without justification. Worth revisiting if a fuller browsing experience is wanted.
+- Dark mode does not exist in this application (see above) — not a Checkpoint 9 regression, a pre-existing state across the whole project, documented rather than silently left unaddressed.
+- Accessibility and responsive verification in this checkpoint were code-level (reading actual layout/positioning logic, actual ARIA attributes, actual event handlers) rather than visual, for the same browser-access reason as above.
+
+
+## Checkpoint 8 — Notifications, Activity Logs & Mentions
+
+The largest checkpoint yet — touching nearly every existing controller, with a real, iteratively-debugged database bug found and fixed along the way.
+
+### Architecture decisions, and why
+
+**`notifications.type` deliberately breaks from this project's usual Postgres ENUM convention**, using `VARCHAR + CHECK` instead. The spec's own type list is already 19 entries and explicitly "at minimum" — ENUM extension (`ALTER TYPE ... ADD VALUE`) has real friction for a classification this likely to keep growing across future checkpoints, where a CHECK constraint is trivial to widen in a later migration.
+
+**`activity_logs` is additive to, not a replacement for**, the existing `task_activity`/`issue_history` tables built in Checkpoints 4–5. Those power narrow per-entity timelines ("what happened to this one task"); the new table answers a workspace/project-wide question ("what happened across this whole space") — the same distinction GitHub draws between a repo-wide Activity feed and a single PR's timeline. Controllers call both at the same mutation points, not one rewritten into the other.
+
+**Mention syntax is a structured token (`@[Display Name](userId)`), not free-text `@username` parsing.** The user model has no `username` field — only `name`/`email` — and open-ended name extraction from prose is genuinely ambiguous (multi-word names, partial matches, substring collisions). The frontend's autocomplete inserts this token when a match is selected; the backend parses it via an unambiguous regex and validates *only* the `userId` — the display name is decoration the backend never trusts, satisfying "do not rely only on client-side parsing" precisely.
+
+**Notification creation and activity logging both went through a `notify()`/`log()` convenience wrapper** (create + Socket.IO broadcast in one call) rather than repeating "create, then emit" at every one of the 6+ controllers that needed it — directly matching the spec's "do not duplicate notification creation logic inside every controller."
+
+### A real, previously-undetected Checkpoint 7 gap, found and fixed
+
+`fileEvents` was built and emitted from `file.controller.js` back in Checkpoint 7 — but never actually subscribed to in `socket.js`. File upload/delete events have been silently going nowhere in real time since Checkpoint 7. Found and fixed while wiring this checkpoint's new `notificationEvents`/`activityEvents` bridges, since it's the exact same category of omission.
+
+### A genuine, multi-step database bug — the debugging process, not just the fix
+
+Testing surfaced a real, reproducible error: deleting multiple users in one statement (`DELETE FROM users`) could throw `insert or update on table "issues" violates foreign key constraint "issues_project_id_fkey"`. This took three iterations to actually resolve, worth documenting honestly rather than presenting only the final answer:
+
+1. **First hypothesis (migration 009) was wrong.** Guessed `issues.linked_task_id`'s `SET NULL` action was racing against `issues.project_id`'s `CASCADE` action. Retested after applying it — the failure persisted verbatim, so the migration was kept (harmless) but the guess was discarded rather than declared a fix.
+2. **Isolated reproduction with minimal, fully controlled data** (not guessing) narrowed the actual trigger condition: an issue's *assignee* — a second user distinct from the workspace owner — being deleted in the same statement as the owner.
+3. **Second attempt (migration 010)** made every `SET NULL`-to-`users` foreign key deferrable, based on that finding. Retested — **still failed**, same error, still naming `issues_project_id_fkey` specifically.
+4. **That repeated detail was the actual clue.** The real mechanism: a `SET NULL` action fires a row `UPDATE`, and that `UPDATE` re-validates *every* foreign key on the row, including `CASCADE` ones — if the `CASCADE` constraint isn't itself deferrable, it fails against a competing cascade path mid-transaction. Making `issues_project_id_fkey` deferrable resolved the exact reproduction immediately.
+5. **Audited the whole schema for the same shape** (a `CASCADE` ancestor-reference plus a `SET NULL` user-reference on the same table) rather than fixing tables one at a time as each was separately discovered — migration 011 covers all of them.
+
+**Final verification was deliberately realistic, not just the minimal case**: two users, a workspace, a task and an issue each assigned to the second user, a comment, the resulting notifications and activity log entries — confirmed rich state existed, deleted both users in one statement, confirmed a completely clean cascade across every table, then separately re-ran the real `DELETE /api/projects/:id` and `DELETE /api/workspaces/:id` endpoints to confirm they still work correctly with the new schema.
+
+**Honest scope note**: none of this is reachable through any of the application's actual delete endpoints today — CollabSphere has no "delete user account" feature, and workspace/project deletion never touches the `users` table itself. The hazard only fires when a user row is deleted directly, a database operation the app never performs. Fixed anyway: a genuine integrity risk worth closing before any future account-deletion feature could hit it, and it was actively blocking reliable test-data cleanup during this checkpoint's own testing.
+
+### Notification triggers (all live-tested, not assumed)
+
+Task/issue: assignment, reassignment, status change (to the assignee), comment mentions, comment-added-to-your-item (deliberately **not** sent if the commenter also mentioned you in the same comment — verified the dedup directly: exactly one notification, not two). Project: member added/removed. Workspace: invitation (only if the invitee already has an account — an email-only invite has no user row to attach an in-app notification to), invitation accepted (notifies the original inviter), role changed. Files: uploading to a task/issue notifies its assignee; general workspace/project file uploads are activity-logged only — deliberately no notification, since there's no single clear recipient the way an assignee provides. Chat: `@mentions`, with conversation-type-aware authorization — workspace members for group chat, only the actual two participants for a direct conversation (verified: mentioning a real workspace member who isn't a DM participant is silently excluded from the stored mentions and generates zero notification, confirmed by checking the excluded user's actual notification list contained only her unrelated prior activity).
+
+### Frontend
+
+`NotificationBell` (unread badge, dropdown, live via `notification:new` on a new personal Socket.IO room — `user:<id>`, which didn't exist before this checkpoint) and a full `/notifications` page with filters, mounted in `AppShell`'s header. `ActivityTimeline` as a new "Activity" tab on both Workspace and Project Details, filterable, live via `activity:new` — left the existing, narrower "Recent Activity" widget on the Overview tab (a Checkpoint 2 system) untouched, since it serves a genuinely different purpose.
+
+`MentionTextarea` — one reusable `@`-detection/autocomplete component, wired into all three real composers (task comments, issue comments, chat), each supplying its own correctly-scoped candidate list. Task/issue candidates reuse `useMentionableUsers`, a thin reshape over the existing `useWorkspaceMembers` hook rather than a new endpoint; chat's DM candidates are just the other participant, matching the backend's narrower authorization.
+
+Two real bugs caught in this session's own new code before shipping: the shared `Textarea` component wasn't wrapped in `React.forwardRef`, which would have silently broken `MentionTextarea`'s cursor-position access entirely (a plain function component silently drops any ref passed to it) — fixed the shared component properly. And task/issue detail pages had no query-param deep-linking for a notification to open a specific item — Issues already had this from Checkpoint 5; Tasks was missing it, added to match, since the spec explicitly requires clicking a notification to navigate to the relevant entity.
+
+### Manual testing performed (all executed live against a running Postgres + Express + Next.js stack, including live Socket.IO)
+
+| Scenario | Result |
+|---|---|
+| Task assignment → live `notification:new` delivered to the assignee's personal room within the same HTTP request/response cycle | ✅ |
+| Comment mention + separate assignee notification correctly deduped to exactly one notification, not two | ✅ |
+| Self-assignment / self-mention correctly produces zero self-notification | ✅ |
+| DM mention of a real workspace member who isn't a DM participant: silently excluded from stored mentions, zero notification | ✅ |
+| Workspace invitation (existing-account case), acceptance notifying the original inviter, role change | ✅ |
+| Project member add/remove | ✅ |
+| File-upload notification correctly reaches the exact Cloudinary network boundary cleanly | ✅ |
+| Mark-as-read / mark-all-as-read / unread count, all consistent after each mutation | ✅ |
+| Full realistic cascade-delete verification (two users, task, issue, comment, notifications, activity logs) plus the real `DELETE /api/projects/:id` and `DELETE /api/workspaces/:id` endpoints | ✅ |
+| Live Socket.IO: both `notification:new` and `activity:new` confirmed delivered in real time | ✅ |
+| Full regression, 14/14 checks across Checkpoints 1–8 | ✅ |
+| Frontend production build clean across all 16 routes, zero new warnings | ✅ |
+
+### Known limitations
+
+- **File-related notification triggers are wired and verified up to the Cloudinary network boundary only** — the same disclosed limitation as every Cloudinary-touching checkpoint since Checkpoint 4; the user confirmed Cloudinary isn't connected yet and will test that layer separately once it is.
+- **Group-chat mention notifications link to the DM inbox, not the exact workspace/project chat tab** — a bare conversation ID isn't enough to resolve that deep link without over-building a lookup for a single notification type; disclosed rather than silently left incomplete.
+- **Project creation and general file uploads are activity-logged but don't generate notifications** — a deliberate scope decision (no single clear recipient), not an oversight.
+- Not verified in an actual browser — a genuine, fresh attempt was made this session (not assumed unavailable from a prior session): `npx playwright install chromium` reports success (exit 0) but the browser binary never actually downloads, silently, for the same confirmed reason as prior checkpoints (this sandbox's network access doesn't reach the required CDN). Manual verification steps below.
+
+### Manual browser verification steps
+
+1. Log in as two different users in two browser sessions (or one normal + one incognito).
+2. User A assigns User B a task. Confirm User B's notification bell badge increments without a page refresh, and clicking the bell shows "You were assigned a task."
+3. Click that notification — confirm it navigates to the Tasks page with that exact task's drawer already open.
+4. User A comments on a task assigned to User B, typing `@` and picking User B from the autocomplete dropdown. Confirm the inserted mention renders as a styled pill, not raw text, once posted.
+5. Confirm User B receives exactly one notification for that comment (a mention notification), not two.
+6. Open Workspace Details → Activity tab. Confirm entries appear for everything performed above, each with the actor's avatar, a plain-English description, and a relative timestamp. Try each filter chip.
+7. Open a task and mention a user who is *not* a member of that workspace by manually constructing the URL-unreachable case is hard to test manually — instead, confirm the autocomplete dropdown itself never offers non-members as suggestions.
+8. Visit `/notifications`, confirm all the filter tabs work, and confirm "Mark all read" clears the bell badge.
+9. Confirm the sidebar's "Notifications" item no longer shows "SOON" and is clickable.
+
+
 ## Post-Checkpoint-7 fix: existing Direct Messages couldn't be opened, Files sidebar state
 ## Post-Checkpoint-7 addition: delete conversation, and a real production bug diagnosed from browser screenshots
+## Post-Checkpoint-7 fix: read receipts showing a false "Seen by" for users who hadn't actually seen the message
+
+A user reported a message showing "Seen by [Owner]" despite that person not being logged in when it was sent. Traced this to `ChatPanel.js`'s `readersFor()` function: it checked only whether a reader had *any* non-null `last_read_message_id` at all, never comparing it against the specific message being rendered. The practical effect: once someone opens a chat even a single time, they show as having "seen" every message sent in that conversation forever afterward, regardless of whether they were ever present for it.
+
+Fixed by comparing the reader's last-read message's *position* in the already-loaded message list against the position of the message being checked, rather than timestamp — the live `read:update` Socket.IO event only carries a `messageId`, not a `last_read_at`, so a timestamp-based comparison would have silently broken for anyone whose read state arrived via that live event instead of the initial page load.
+
+Verified against the exact real backend response shape the frontend receives (not synthetic data): reproduced the reported scenario precisely — a user marks an older message read, then a brand-new message arrives while they're absent — confirmed the old logic reproduces the false "seen" and the fixed logic correctly shows no one until that specific person actually reads that specific message, then correctly shows them once they do.
+
+
 
 ### The production "Something went wrong" bug — diagnosed, not fixed in code
 

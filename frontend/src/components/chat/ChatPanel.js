@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send, Paperclip } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { Textarea } from '@/components/ui/Select';
 import { Alert } from '@/components/ui/Card';
+import MentionTextarea from '@/components/mentions/MentionTextarea';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import FilePreview from '@/components/files/FilePreview';
@@ -27,6 +27,7 @@ export default function ChatPanel({
   initialMessages,
   initialReadStates,
   myRole,
+  mentionCandidates = [],
   className = '',
 }) {
   const currentUser = useAuthStore((s) => s.user);
@@ -89,8 +90,24 @@ export default function ChatPanel({
 
   const readersFor = (messageId) => {
     const idx = (messages || []).findIndex((m) => m.id === messageId);
-    if (idx !== messages.length - 1) return [];
-    return readStates.filter((r) => r.user_id !== currentUser?.id && r.last_read_message_id);
+    if (idx === -1 || idx !== messages.length - 1) return [];
+
+    // A reader's last_read_message_id only means they've seen THIS
+    // message if it's at or after this message's position in the
+    // thread — not merely non-null. The previous version only checked
+    // for *any* prior read state, so anyone who had ever opened this
+    // chat even once, long before this message was sent, would show as
+    // having "seen" it. Compared by position in the already-loaded
+    // `messages` array rather than by timestamp, since the live
+    // 'read:update' socket event only carries a messageId, not a
+    // last_read_at — a timestamp-based comparison would silently break
+    // for anyone whose read state arrived via that live event instead
+    // of the initial page load.
+    return readStates.filter((r) => {
+      if (r.user_id === currentUser?.id || !r.last_read_message_id) return false;
+      const readIdx = messages.findIndex((m) => m.id === r.last_read_message_id);
+      return readIdx !== -1 && readIdx >= idx;
+    });
   };
 
   const handleFileSelect = (e) => {
@@ -166,12 +183,13 @@ export default function ChatPanel({
           >
             <Paperclip className="h-4 w-4" />
           </button>
-          <Textarea
+          <MentionTextarea
             rows={1}
             placeholder="Write a message..."
             value={draft}
             onChange={handleDraftChange}
             onKeyDown={handleKeyDown}
+            candidates={mentionCandidates}
             className="max-h-32 resize-none"
           />
           <Button onClick={send} disabled={!draft.trim()} loading={sendMessage.isPending}>

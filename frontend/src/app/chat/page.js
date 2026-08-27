@@ -188,6 +188,13 @@ export default function ChatPage() {
                 initialMessages={activeThread.messages}
                 initialReadStates={activeThread.readStates}
                 myRole={myRoleInActiveWorkspace || 'member'}
+                mentionCandidates={[
+                  {
+                    id: activeThread.summary.other_user_id,
+                    name: activeThread.summary.other_user_name,
+                    avatarUrl: activeThread.summary.other_user_avatar,
+                  },
+                ]}
                 className="flex-1"
               />
             </>

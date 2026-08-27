@@ -3,6 +3,8 @@ const ApiError = require('../utils/ApiError');
 const workspaceService = require('../services/workspace.service');
 const memberService = require('../services/workspaceMember.service');
 const activityService = require('../services/workspaceActivity.service');
+const notificationService = require('../services/notification.service');
+const activityLogService = require('../services/activityLog.service');
 
 // POST /api/workspaces
 const createWorkspace = asyncHandler(async (req, res) => {
@@ -77,6 +79,28 @@ const updateMemberRole = asyncHandler(async (req, res) => {
   }
 
   const updated = await memberService.updateRole(memberId, role);
+
+  await activityLogService.log({
+    workspaceId,
+    actorId: req.user.id,
+    action: 'workspace.role_changed',
+    entityType: 'workspace_member',
+    entityId: member.user_id,
+    oldValue: { role: member.role },
+    newValue: { role },
+  });
+
+  await notificationService.notify({
+    userId: member.user_id,
+    actorId: req.user.id,
+    type: 'WORKSPACE_ROLE_CHANGED',
+    title: 'Your role was changed',
+    message: `${req.user.name} changed your role from ${member.role} to ${role}`,
+    entityType: 'workspace',
+    entityId: workspaceId,
+    metadata: { from: member.role, to: role },
+  });
+
   res.json({ success: true, data: { member: updated } });
 });
 

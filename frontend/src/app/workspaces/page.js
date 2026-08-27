@@ -9,10 +9,11 @@ import Button from '@/components/ui/Button';
 import Avatar from '@/components/ui/Avatar';
 import RoleBadge from '@/components/ui/RoleBadge';
 import CreateWorkspaceModal from '@/components/workspaces/CreateWorkspaceModal';
+import ErrorState from '@/components/ui/ErrorState';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
 
 export default function WorkspacesPage() {
-  const { data: workspaces, isLoading } = useWorkspaces();
+  const { data: workspaces, isLoading, isError, refetch } = useWorkspaces();
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
@@ -26,7 +27,7 @@ export default function WorkspacesPage() {
       }
     >
       <div className="flex items-center justify-between sm:hidden">
-        <p className="text-sm text-muted">{workspaces?.length ?? 0} workspaces</p>
+        <p className="text-sm text-muted">{isLoading ? 'Loading...' : `${workspaces?.length ?? 0} workspaces`}</p>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           New
@@ -41,7 +42,11 @@ export default function WorkspacesPage() {
         </div>
       )}
 
-      {!isLoading && workspaces?.length === 0 && (
+      {isError && (
+        <ErrorState message="Unable to load workspaces." onRetry={refetch} className="mt-8" />
+      )}
+
+      {!isLoading && !isError && workspaces?.length === 0 && (
         <Card className="mt-8 flex flex-col items-center gap-3 p-12 text-center">
           <Boxes className="h-8 w-8 text-brand" />
           <p className="font-display text-base font-semibold text-ink">No workspaces yet</p>

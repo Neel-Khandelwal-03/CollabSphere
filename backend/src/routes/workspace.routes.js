@@ -8,7 +8,10 @@ const projectController = require('../controllers/project.controller');
 const labelController = require('../controllers/label.controller');
 const chatController = require('../controllers/chat.controller');
 const fileController = require('../controllers/file.controller');
+const activityController = require('../controllers/activity.controller');
+const analyticsController = require('../controllers/analytics.controller');
 const { listFilesQueryValidators } = require('../middleware/fileValidators');
+const { activityQueryValidators } = require('../middleware/activityValidators');
 const {
   createWorkspaceValidators,
   updateWorkspaceValidators,
@@ -160,6 +163,25 @@ router.get(
   validate,
   requireWorkspaceRole('viewer'),
   fileController.listWorkspaceFiles
+);
+
+// Added for Checkpoint 8 (Notifications/Activity/Mentions).
+router.get(
+  '/:workspaceId/activity',
+  workspaceIdValidators,
+  activityQueryValidators,
+  validate,
+  requireWorkspaceRole('viewer'),
+  activityController.getWorkspaceActivity
+);
+
+// Added for Checkpoint 9 (Analytics).
+router.get(
+  '/:workspaceId/analytics',
+  workspaceIdValidators,
+  validate,
+  requireWorkspaceRole('viewer'),
+  analyticsController.getWorkspaceAnalytics
 );
 
 module.exports = router;

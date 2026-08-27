@@ -2,7 +2,7 @@ const db = require('../config/db');
 
 async function list(taskId) {
   const { rows } = await db.query(
-    `SELECT c.id, c.task_id, c.user_id, c.comment, c.edited_at, c.created_at,
+    `SELECT c.id, c.task_id, c.user_id, c.comment, c.mentions, c.edited_at, c.created_at,
             u.name AS author_name, u.avatar_url AS author_avatar
      FROM task_comments c
      JOIN users u ON u.id = c.user_id
@@ -18,13 +18,13 @@ async function findById(commentId) {
   return rows[0] || null;
 }
 
-async function create(taskId, userId, comment) {
+async function create(taskId, userId, comment, mentions = []) {
   const { rows } = await db.query(
-    `INSERT INTO task_comments (task_id, user_id, comment) VALUES ($1, $2, $3) RETURNING id`,
-    [taskId, userId, comment]
+    `INSERT INTO task_comments (task_id, user_id, comment, mentions) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [taskId, userId, comment, JSON.stringify(mentions)]
   );
   const { rows: one } = await db.query(
-    `SELECT c.id, c.task_id, c.user_id, c.comment, c.edited_at, c.created_at,
+    `SELECT c.id, c.task_id, c.user_id, c.comment, c.mentions, c.edited_at, c.created_at,
             u.name AS author_name, u.avatar_url AS author_avatar
      FROM task_comments c JOIN users u ON u.id = c.user_id WHERE c.id = $1`,
     [rows[0].id]

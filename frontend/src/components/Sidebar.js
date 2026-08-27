@@ -38,7 +38,7 @@ const NAV_ITEMS = [
   // which the instruction for this fix explicitly said not to do.
   { href: '/workspaces', label: 'Files', icon: FolderOpen },
   { href: '#', label: 'Analytics', icon: BarChart3, comingSoon: true },
-  { href: '#', label: 'Notifications', icon: Bell, comingSoon: true },
+  { href: '/notifications', label: 'Notifications', icon: Bell },
 ];
 
 /**

@@ -4,6 +4,8 @@ const conversationService = require('../services/conversation.service');
 const messageService = require('../services/message.service');
 const workspaceMemberService = require('../services/workspaceMember.service');
 const fileService = require('../services/file.service');
+const notificationService = require('../services/notification.service');
+const { resolveValidMentions } = require('../utils/mentions');
 const { uploadBuffer } = require('../utils/cloudinary');
 const messageEvents = require('../utils/messageEvents');
 
@@ -77,9 +79,51 @@ const listMessages = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { messages } });
 });
 
+/**
+ * Who's mentionable depends on conversation type: for workspace/project
+ * chat, participation is implicit via workspace membership (matching
+ * how read/write access to those conversations already works); for a
+ * direct conversation, only its two actual participants qualify — the
+ * rest of the workspace should never be mentionable inside someone
+ * else's DM. Returns { id, name } pairs (not bare ids) so the caller
+ * can store display names alongside the mention, matching the
+ * {userId, name} shape task/issue comments already use — DM
+ * participants have no name available from listParticipants alone, so
+ * those are backfilled with a lookup only when actually mentioned.
+ */
+async function getAuthorizedMentionTargets(conversation) {
+  if (conversation.type === 'direct') {
+    const userIds = await conversationService.listParticipants(conversation.id);
+    return userIds.map((id) => ({ id, name: null }));
+  }
+  const members = await workspaceMemberService.listMembers(conversation.workspace_id);
+  return members.map((m) => ({ id: m.user_id, name: m.name }));
+}
+
 const createMessage = asyncHandler(async (req, res) => {
-  const message = await messageService.create(req.params.conversationId, req.user.id, req.body.content);
+  const targets = await getAuthorizedMentionTargets(req.conversation);
+  const authorizedUserIds = targets.map((t) => t.id);
+  const mentionedUserIds = resolveValidMentions(req.body.content, authorizedUserIds);
+  const mentions = mentionedUserIds.map((userId) => ({
+    userId,
+    name: targets.find((t) => t.id === userId)?.name,
+  }));
+
+  const message = await messageService.create(req.params.conversationId, req.user.id, req.body.content, null, mentions);
   messageEvents.emit('created', { conversation: req.conversation, message });
+
+  if (mentionedUserIds.length > 0) {
+    await notificationService.notifyMentions(mentionedUserIds, {
+      actorId: req.user.id,
+      type: 'CHAT_MENTION',
+      title: 'You were mentioned in chat',
+      message: `${req.user.name} mentioned you`,
+      entityType: 'conversation',
+      entityId: req.params.conversationId,
+      metadata: { conversationType: req.conversation.type },
+    });
+  }
+
   res.status(201).json({ success: true, data: { message } });
 });
 
@@ -113,14 +157,36 @@ const createFileMessage = asyncHandler(async (req, res) => {
 
   // Caption is optional; falls back to the filename so the message never
   // renders with empty body text.
+  const targets = await getAuthorizedMentionTargets(req.conversation);
+  const authorizedUserIds = targets.map((t) => t.id);
+  const mentionedUserIds = resolveValidMentions(req.body.content || '', authorizedUserIds);
+  const mentions = mentionedUserIds.map((userId) => ({
+    userId,
+    name: targets.find((t) => t.id === userId)?.name,
+  }));
+
   const message = await messageService.create(
     req.params.conversationId,
     req.user.id,
     req.body.content || req.file.originalname,
-    file.id
+    file.id,
+    mentions
   );
 
   messageEvents.emit('created', { conversation: req.conversation, message });
+
+  if (mentionedUserIds.length > 0) {
+    await notificationService.notifyMentions(mentionedUserIds, {
+      actorId: req.user.id,
+      type: 'CHAT_MENTION',
+      title: 'You were mentioned in chat',
+      message: `${req.user.name} mentioned you`,
+      entityType: 'conversation',
+      entityId: req.params.conversationId,
+      metadata: { conversationType: req.conversation.type },
+    });
+  }
+
   res.status(201).json({ success: true, data: { message } });
 });
 

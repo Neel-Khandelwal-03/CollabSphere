@@ -6,6 +6,9 @@ const labelService = require('../services/taskLabel.service');
 const attachmentService = require('../services/taskAttachment.service');
 const activityService = require('../services/taskActivity.service');
 const workspaceMemberService = require('../services/workspaceMember.service');
+const notificationService = require('../services/notification.service');
+const activityLogService = require('../services/activityLog.service');
+const { resolveValidMentions } = require('../utils/mentions');
 const taskEvents = require('../utils/taskEvents');
 const { uploadBuffer, deleteResource } = require('../utils/cloudinary');
 
@@ -56,6 +59,30 @@ const createTask = asyncHandler(async (req, res) => {
 
   const task = await taskService.findById(taskId);
   taskEvents.emit('created', { task, actorId: req.user.id });
+
+  await activityLogService.log({
+    workspaceId: req.params.workspaceId,
+    projectId,
+    actorId: req.user.id,
+    action: 'task.created',
+    entityType: 'task',
+    entityId: taskId,
+    newValue: { title },
+  });
+
+  if (assignedTo) {
+    await notificationService.notify({
+      userId: assignedTo,
+      actorId: req.user.id,
+      type: 'TASK_ASSIGNED',
+      title: `You were assigned a task`,
+      message: `${req.user.name} assigned you "${title}"`,
+      entityType: 'task',
+      entityId: taskId,
+      metadata: { taskTitle: title, projectId },
+    });
+  }
+
   res.status(201).json({ success: true, data: { task } });
 });
 
@@ -131,6 +158,32 @@ const updateTask = asyncHandler(async (req, res) => {
     await activityService.log(req.params.taskId, req.user.id, 'updated', { title: changes.title });
   }
 
+  if (Object.keys(changes).length > 0) {
+    await activityLogService.log({
+      workspaceId: req.params.workspaceId,
+      projectId: req.task.project_id,
+      actorId: req.user.id,
+      action: changes.assignee ? 'task.reassigned' : 'task.updated',
+      entityType: 'task',
+      entityId: req.params.taskId,
+      oldValue: Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.from])),
+      newValue: Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.to])),
+    });
+  }
+
+  if (changes.assignee && changes.assignee.to) {
+    await notificationService.notify({
+      userId: changes.assignee.to,
+      actorId: req.user.id,
+      type: 'TASK_ASSIGNED',
+      title: 'You were assigned a task',
+      message: `${req.user.name} assigned you "${task.title}"`,
+      entityType: 'task',
+      entityId: req.params.taskId,
+      metadata: { taskTitle: task.title, projectId: req.task.project_id },
+    });
+  }
+
   taskEvents.emit('updated', { task, actorId: req.user.id });
   res.json({ success: true, data: { task } });
 });
@@ -145,6 +198,17 @@ const deleteTask = asyncHandler(async (req, res) => {
     workspaceId: req.task.workspace_id,
     actorId: req.user.id,
   });
+
+  await activityLogService.log({
+    workspaceId: req.task.workspace_id,
+    projectId: req.task.project_id,
+    actorId: req.user.id,
+    action: 'task.deleted',
+    entityType: 'task',
+    entityId: req.params.taskId,
+    oldValue: { title: req.task.title },
+  });
+
   res.json({ success: true, message: 'Task deleted' });
 });
 
@@ -165,6 +229,31 @@ const changeStatus = asyncHandler(async (req, res) => {
   const task = await taskService.findById(req.params.taskId);
 
   await activityService.log(req.params.taskId, req.user.id, 'status_changed', { from: fromStatus, to: status });
+
+  await activityLogService.log({
+    workspaceId: req.params.workspaceId,
+    projectId: req.task.project_id,
+    actorId: req.user.id,
+    action: 'task.status_changed',
+    entityType: 'task',
+    entityId: req.params.taskId,
+    oldValue: { status: fromStatus },
+    newValue: { status },
+  });
+
+  if (task.assigned_to && task.assigned_to !== req.user.id) {
+    await notificationService.notify({
+      userId: task.assigned_to,
+      actorId: req.user.id,
+      type: 'TASK_STATUS_CHANGED',
+      title: 'Task status changed',
+      message: `${req.user.name} moved "${task.title}" from ${fromStatus} to ${status}`,
+      entityType: 'task',
+      entityId: req.params.taskId,
+      metadata: { taskTitle: task.title, from: fromStatus, to: status },
+    });
+  }
+
   taskEvents.emit('status_changed', { task, from: fromStatus, to: status, actorId: req.user.id });
   res.json({ success: true, data: { task } });
 });
@@ -181,6 +270,16 @@ const changePosition = asyncHandler(async (req, res) => {
 
   if (fromStatus !== status) {
     await activityService.log(req.params.taskId, req.user.id, 'status_changed', { from: fromStatus, to: status });
+    await activityLogService.log({
+      workspaceId: req.params.workspaceId,
+      projectId: req.task.project_id,
+      actorId: req.user.id,
+      action: 'task.moved',
+      entityType: 'task',
+      entityId: req.params.taskId,
+      oldValue: { status: fromStatus },
+      newValue: { status },
+    });
     taskEvents.emit('status_changed', { task, from: fromStatus, to: status, actorId: req.user.id });
   } else {
     taskEvents.emit('updated', { task, actorId: req.user.id });
@@ -192,8 +291,55 @@ const changePosition = asyncHandler(async (req, res) => {
 
 // POST /api/tasks/:taskId/comments — requireWorkspaceRole('member')
 const createComment = asyncHandler(async (req, res) => {
-  const comment = await commentService.create(req.params.taskId, req.user.id, req.body.comment);
+  const members = await workspaceMemberService.listMembers(req.params.workspaceId);
+  const authorizedUserIds = new Set(members.map((m) => m.user_id));
+  const mentionedUserIds = resolveValidMentions(req.body.comment, authorizedUserIds);
+  const mentions = mentionedUserIds.map((userId) => ({
+    userId,
+    name: members.find((m) => m.user_id === userId)?.name,
+  }));
+
+  const comment = await commentService.create(req.params.taskId, req.user.id, req.body.comment, mentions);
   await activityService.log(req.params.taskId, req.user.id, 'comment_added', { commentId: comment.id });
+  await activityLogService.log({
+    workspaceId: req.params.workspaceId,
+    projectId: req.task.project_id,
+    actorId: req.user.id,
+    action: 'task.comment_added',
+    entityType: 'task',
+    entityId: req.params.taskId,
+  });
+
+  if (mentionedUserIds.length > 0) {
+    await notificationService.notifyMentions(mentionedUserIds, {
+      actorId: req.user.id,
+      type: 'TASK_MENTION',
+      title: 'You were mentioned in a task',
+      message: `${req.user.name} mentioned you on "${req.task.title}"`,
+      entityType: 'task',
+      entityId: req.params.taskId,
+      metadata: { taskTitle: req.task.title, commentId: comment.id },
+    });
+  }
+
+  // TASK_COMMENT goes to the assignee specifically — separate from the
+  // mention notification above, and only sent if the assignee wasn't
+  // already mentioned (would be a redundant second notification for the
+  // same comment) and isn't the commenter themselves (notify() already
+  // skips self-notification, but checking here avoids the wasted call).
+  if (req.task.assigned_to && req.task.assigned_to !== req.user.id && !mentionedUserIds.includes(req.task.assigned_to)) {
+    await notificationService.notify({
+      userId: req.task.assigned_to,
+      actorId: req.user.id,
+      type: 'TASK_COMMENT',
+      title: 'New comment on your task',
+      message: `${req.user.name} commented on "${req.task.title}"`,
+      entityType: 'task',
+      entityId: req.params.taskId,
+      metadata: { taskTitle: req.task.title, commentId: comment.id },
+    });
+  }
+
   res.status(201).json({ success: true, data: { comment } });
 });
 
@@ -249,6 +395,30 @@ const uploadAttachment = asyncHandler(async (req, res) => {
   });
 
   await activityService.log(req.params.taskId, req.user.id, 'attachment_uploaded', { fileName: attachment.file_name });
+
+  await activityLogService.log({
+    workspaceId: req.params.workspaceId,
+    projectId: req.task.project_id,
+    actorId: req.user.id,
+    action: 'file.uploaded',
+    entityType: 'task',
+    entityId: req.params.taskId,
+    newValue: { fileName: attachment.file_name },
+  });
+
+  if (req.task.assigned_to && req.task.assigned_to !== req.user.id) {
+    await notificationService.notify({
+      userId: req.task.assigned_to,
+      actorId: req.user.id,
+      type: 'FILE_UPLOADED',
+      title: 'New file on your task',
+      message: `${req.user.name} uploaded "${attachment.file_name}" to "${req.task.title}"`,
+      entityType: 'task',
+      entityId: req.params.taskId,
+      metadata: { taskTitle: req.task.title, fileName: attachment.file_name },
+    });
+  }
+
   res.status(201).json({ success: true, data: { attachment } });
 });
 

@@ -219,6 +219,7 @@ export default function TaskDetailsDrawer({ taskId, workspaceId, onClose, onDele
                     comments={data.comments || []}
                     canComment={canComment}
                     canModerate={isManager}
+                    mentionCandidates={(members || []).map((m) => ({ id: m.user_id, name: m.name, avatarUrl: m.avatar_url }))}
                   />
                 </div>
 

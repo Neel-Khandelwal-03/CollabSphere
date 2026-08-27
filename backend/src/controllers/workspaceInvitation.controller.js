@@ -5,6 +5,8 @@ const workspaceService = require('../services/workspace.service');
 const memberService = require('../services/workspaceMember.service');
 const invitationService = require('../services/workspaceInvitation.service');
 const userService = require('../services/user.service');
+const notificationService = require('../services/notification.service');
+const activityLogService = require('../services/activityLog.service');
 const { sendWorkspaceInviteEmail } = require('../utils/email');
 
 // POST /api/workspaces/:workspaceId/invite
@@ -40,6 +42,22 @@ const inviteMember = asyncHandler(async (req, res) => {
     inviteUrl,
   }).catch((err) => console.error('Failed to send invite email:', err.message));
 
+  // In-app notification only makes sense if the invitee already has an
+  // account — someone invited by email who's never signed up has no
+  // user row to attach a notification to; they still get the email above.
+  if (existingUser) {
+    await notificationService.notify({
+      userId: existingUser.id,
+      actorId: req.user.id,
+      type: 'WORKSPACE_INVITATION',
+      title: 'You were invited to a workspace',
+      message: `${inviter.name} invited you to join "${workspace.name}"`,
+      entityType: 'workspace',
+      entityId: workspaceId,
+      metadata: { workspaceName: workspace.name, role },
+    });
+  }
+
   res.status(201).json({
     success: true,
     data: {
@@ -68,6 +86,29 @@ const acceptInvitation = asyncHandler(async (req, res) => {
   await invitationService.respond(invitation.id, true);
 
   const workspace = await workspaceService.findById(invitation.workspace_id);
+
+  await activityLogService.log({
+    workspaceId: invitation.workspace_id,
+    actorId: req.user.id,
+    action: 'workspace.member_added',
+    entityType: 'workspace_member',
+    entityId: req.user.id,
+    newValue: { role: invitation.role },
+  });
+
+  if (invitation.invited_by) {
+    await notificationService.notify({
+      userId: invitation.invited_by,
+      actorId: req.user.id,
+      type: 'WORKSPACE_MEMBER_ADDED',
+      title: 'Invitation accepted',
+      message: `${req.user.name} joined "${workspace.name}"`,
+      entityType: 'workspace',
+      entityId: invitation.workspace_id,
+      metadata: { workspaceName: workspace.name },
+    });
+  }
+
   res.json({ success: true, data: { workspace } });
 });
 

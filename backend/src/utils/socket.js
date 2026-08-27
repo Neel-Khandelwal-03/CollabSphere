@@ -4,6 +4,9 @@ const db = require('../config/db');
 const taskEvents = require('./taskEvents');
 const issueEvents = require('./issueEvents');
 const messageEvents = require('./messageEvents');
+const fileEvents = require('./fileEvents');
+const notificationEvents = require('./notificationEvents');
+const activityEvents = require('./activityEvents');
 
 // userId -> Set<socketId>. In-memory by design: presence is inherently
 // transient (doesn't need to survive a server restart, unlike messages
@@ -17,6 +20,9 @@ function workspaceRoom(workspaceId) {
 }
 function conversationRoom(conversationId) {
   return `conversation:${conversationId}`;
+}
+function userRoom(userId) {
+  return `user:${userId}`;
 }
 
 async function getUserWorkspaceIds(userId) {
@@ -78,6 +84,12 @@ function initSocket(httpServer) {
     const sockets = onlineSockets.get(userId);
     const wasOffline = sockets.size === 0;
     sockets.add(socket.id);
+
+    // A personal room, distinct from every workspace/conversation room —
+    // notifications are targeted to exactly one person regardless of
+    // which workspace or chat they're currently looking at, which none
+    // of the existing rooms provide on their own.
+    socket.join(userRoom(userId));
 
     let workspaceIds = [];
     try {
@@ -196,6 +208,28 @@ function initSocket(httpServer) {
     const room = type === 'workspace' ? workspaceRoom(workspaceId) : conversationRoom(conversationId);
     io.to(room).emit('conversation:deleted', { conversationId });
   });
+
+  // Emitted since Checkpoint 7 but never actually bridged — file
+  // upload/delete never broadcast in real time until now.
+  fileEvents.on('uploaded', ({ file }) =>
+    io.to(workspaceRoom(file.workspace_id)).emit('file:uploaded', { file })
+  );
+  fileEvents.on('deleted', ({ fileId, workspaceId }) =>
+    io.to(workspaceRoom(workspaceId)).emit('file:deleted', { fileId })
+  );
+
+  // Notifications broadcast to the recipient's personal room only —
+  // never a workspace/conversation room, since a notification is
+  // inherently 1:1, not something every workspace member should see.
+  notificationEvents.on('created', (notification) =>
+    io.to(userRoom(notification.user_id)).emit('notification:new', notification)
+  );
+
+  // Activity broadcasts workspace-wide (see activityLog.service.js's
+  // log() for why there's no separate project-room concept).
+  activityEvents.on('created', (activity) =>
+    io.to(workspaceRoom(activity.workspaceId)).emit('activity:new', activity)
+  );
 
   return io;
 }
